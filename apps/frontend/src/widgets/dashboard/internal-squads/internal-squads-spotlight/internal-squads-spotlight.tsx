@@ -34,7 +34,7 @@ export const InternalSquadsSpotlightWidget = (props: IProps) => {
                             size="lg"
                             variant="light"
                         >
-                            {formatInt(item.info.inboundsCount, {
+                            {formatInt(item.info.nodesCount, {
                                 thousandSeparator: ','
                             })}
                         </Badge>

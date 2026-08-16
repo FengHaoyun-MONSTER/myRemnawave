@@ -35,7 +35,7 @@ func TestLoadFromAcceptsValidConfiguration(t *testing.T) {
 
 func TestLoadFromRejectsOversizedMessages(t *testing.T) {
 	env := validEnvironment(t)
-	env["MYREMNAWAVE_MAX_MESSAGE_BYTES"] = "5000000"
+	env["MYREMNAWAVE_MAX_MESSAGE_BYTES"] = "8388609"
 
 	_, err := LoadFrom(mapLookup(env))
 	if err == nil || !strings.Contains(err.Error(), "MYREMNAWAVE_MAX_MESSAGE_BYTES") {

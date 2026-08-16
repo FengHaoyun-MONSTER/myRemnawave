@@ -12,8 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/certificate"
+	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/instance"
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/inventory"
+	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/nodeconfig"
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/protocol"
+	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/warp"
 )
 
 type InventoryHandler struct {
@@ -52,6 +56,11 @@ type PreflightHandler struct {
 	ManagedRoot string
 }
 
+const (
+	minimumMemoryBytes   = 1 << 30
+	minimumDiskFreeBytes = 2 << 30
+)
+
 func (h PreflightHandler) Execute(ctx context.Context, payload json.RawMessage) (any, error) {
 	request, err := protocol.DecodePayload[PreflightRequest](payload)
 	if err != nil {
@@ -64,7 +73,7 @@ func (h PreflightHandler) Execute(ctx context.Context, payload json.RawMessage) 
 	if err != nil {
 		return nil, &Error{Code: "INVENTORY_FAILED", Message: err.Error()}
 	}
-	checks := []Check{supportedOSCheck(system)}
+	checks := []Check{supportedOSCheck(system), memoryCheck(system), diskCheck(system)}
 	checks = append(checks, commandCheck(ctx, "docker", "docker", "version", "--format", "{{.Server.Version}}"))
 	checks = append(checks, commandCheck(ctx, "systemd", "systemctl", "--version"))
 	for _, requirement := range request.Ports {
@@ -79,10 +88,34 @@ func (h PreflightHandler) Execute(ctx context.Context, payload json.RawMessage) 
 	return PreflightResult{System: system, Checks: checks, OK: ok}, nil
 }
 
+func memoryCheck(system inventory.System) Check {
+	ok := system.MemoryBytes >= minimumMemoryBytes
+	return Check{
+		Name:    "memory",
+		OK:      ok,
+		Message: fmt.Sprintf("%d bytes total; at least %d bytes required", system.MemoryBytes, minimumMemoryBytes),
+	}
+}
+
+func diskCheck(system inventory.System) Check {
+	ok := system.DiskFreeBytes >= minimumDiskFreeBytes
+	return Check{
+		Name:    "disk_free",
+		OK:      ok,
+		Message: fmt.Sprintf("%d bytes free; at least %d bytes required", system.DiskFreeBytes, minimumDiskFreeBytes),
+	}
+}
+
 func DefaultHandlers(managedRoot string) map[string]Handler {
 	return map[string]Handler{
-		protocol.CommandInventory: InventoryHandler{ManagedRoot: managedRoot},
-		protocol.CommandPreflight: PreflightHandler{ManagedRoot: managedRoot},
+		protocol.CommandInventory:            InventoryHandler{ManagedRoot: managedRoot},
+		protocol.CommandPreflight:            PreflightHandler{ManagedRoot: managedRoot},
+		protocol.CommandReconcileInstance:    instance.Handler{ManagedRoot: managedRoot},
+		protocol.CommandReconcileCertificate: certificate.Handler{ManagedRoot: managedRoot},
+		protocol.CommandReconcileWARP:        warp.NewHandler(managedRoot),
+		protocol.CommandApplyConfig:          nodeconfig.Handler{ManagedRoot: managedRoot},
+		protocol.CommandStartInstance:        instance.LifecycleHandler{Start: true},
+		protocol.CommandStopInstance:         instance.LifecycleHandler{Start: false},
 	}
 }
 

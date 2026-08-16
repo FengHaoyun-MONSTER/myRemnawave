@@ -92,6 +92,12 @@ export const REST_API = {
         ACTIONS: {
             ROTATE_ENROLLMENT_TOKEN: (uuid: string) =>
                 `${ROOT}/${CONTROLLERS.MACHINES_CONTROLLER}/${CONTROLLERS.MACHINES_ROUTES.ACTIONS.ROTATE_ENROLLMENT_TOKEN(uuid)}`,
+            PROVISION: (uuid: string) =>
+                `${ROOT}/${CONTROLLERS.MACHINES_CONTROLLER}/${CONTROLLERS.MACHINES_ROUTES.ACTIONS.PROVISION(uuid)}`,
+            RETRY: (uuid: string) =>
+                `${ROOT}/${CONTROLLERS.MACHINES_CONTROLLER}/${CONTROLLERS.MACHINES_ROUTES.ACTIONS.RETRY(uuid)}`,
+            PUBLISH: (uuid: string) =>
+                `${ROOT}/${CONTROLLERS.MACHINES_CONTROLLER}/${CONTROLLERS.MACHINES_ROUTES.ACTIONS.PUBLISH(uuid)}`,
         },
     },
     MACHINE_ENROLLMENT: {

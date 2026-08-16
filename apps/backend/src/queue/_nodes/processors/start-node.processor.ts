@@ -1,4 +1,5 @@
 import { Job } from 'bullmq';
+import { randomUUID } from 'node:crypto';
 import semver from 'semver';
 
 import { Processor, WorkerHost } from '@nestjs/bullmq';
@@ -7,14 +8,18 @@ import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
 import { AxiosService } from '@common/axios/axios.service';
+import { PrismaService } from '@common/database/prisma.service';
 import { RawCacheService } from '@common/raw-cache';
 import { formatExecutionTime, getTime } from '@common/utils/get-elapsed-time';
 import { CACHE_KEYS, CACHE_KEYS_TTL, EVENTS } from '@libs/contracts/constants';
 
 import { NodeEvent } from '@integration-modules/notifications/interfaces';
 
+import { GetNodeJwtCommand } from '@modules/keygen/commands/get-node-jwt';
+import { renderManagedConfig } from '@modules/machines/managed-config.renderer';
 import { GetPluginByUuidQuery } from '@modules/node-plugins/queries/get-plugin-by-uuid';
 import { UpdateNodeCommand } from '@modules/nodes/commands/update-node';
+import { NodesEntity } from '@modules/nodes/entities/nodes.entity';
 import { GetNodeByUuidQuery } from '@modules/nodes/queries/get-node-by-uuid';
 import { GetPreparedConfigWithUsersQuery } from '@modules/users/queries/get-prepared-config-with-users';
 
@@ -36,13 +41,21 @@ export class StartNodeProcessor extends WorkerHost {
         private readonly eventEmitter: EventEmitter2,
         private readonly commandBus: CommandBus,
         private readonly rawCacheService: RawCacheService,
+        private readonly prisma: PrismaService,
     ) {
         super();
     }
 
-    async process(job: Job<{ nodeUuid: string; force?: boolean }>) {
+    async process(
+        job: Job<{
+            nodeUuid: string;
+            force?: boolean;
+            managedConfigUpdate?: boolean;
+            failClosedOnError?: boolean;
+        }>,
+    ) {
         try {
-            const { nodeUuid, force } = job.data;
+            const { nodeUuid, force, failClosedOnError } = job.data;
 
             const nodeCheckup = await this.queryBus.execute(new GetNodeByUuidQuery(nodeUuid));
 
@@ -53,7 +66,7 @@ export class StartNodeProcessor extends WorkerHost {
 
             const { response: node } = nodeCheckup;
 
-            if (node.isConnecting) {
+            if (node.isConnecting && !node.machineUuid) {
                 return;
             }
 
@@ -94,6 +107,11 @@ export class StartNodeProcessor extends WorkerHost {
                     isConnecting: true,
                 }),
             );
+
+            if (node.machineUuid) {
+                await this.queueManagedConfig(node, force ?? false, failClosedOnError ?? false);
+                return;
+            }
 
             const xrayStatusResponse = await this.axios.getNodeHealth({
                 address: node.address,
@@ -285,6 +303,166 @@ export class StartNodeProcessor extends WorkerHost {
             return;
         } catch (error) {
             this.logger.error(`Error handling "${NODES_JOB_NAMES.START_NODE}" job: ${error}`);
+            await this.handleManagedConfigQueueFailure(
+                job.data.nodeUuid,
+                error,
+                job.data.failClosedOnError ?? false,
+            );
         }
+    }
+
+    private async handleManagedConfigQueueFailure(
+        nodeUuid: string,
+        error: unknown,
+        failClosedOnError: boolean,
+    ): Promise<void> {
+        const node = await this.prisma.nodes.findUnique({
+            where: { uuid: nodeUuid },
+            select: { machineUuid: true, isPublished: true },
+        });
+        if (!node?.machineUuid) return;
+        const message = (error instanceof Error ? error.message : String(error)).slice(0, 1_000);
+        const now = new Date();
+        await this.prisma.$transaction(async (transaction) => {
+            await transaction.nodes.update({
+                where: { uuid: nodeUuid },
+                data: {
+                    lifecycleState: failClosedOnError
+                        ? 'FAILED'
+                        : node.isPublished
+                          ? 'PUBLISHED'
+                          : 'FAILED',
+                    isConnecting: false,
+                    isConnected: node.isPublished && !failClosedOnError,
+                    lastStatusMessage: message,
+                    lastStatusChange: now,
+                },
+            });
+            if (!failClosedOnError) return;
+            await transaction.hosts.updateMany({
+                where: { nodes: { some: { nodeUuid } } },
+                data: { isDisabled: true },
+            });
+            const activeStop = await transaction.machineCommands.findFirst({
+                where: {
+                    machineUuid: node.machineUuid!,
+                    kind: 'stop_instance',
+                    status: { in: ['QUEUED', 'RUNNING'] },
+                    payload: { path: ['instanceId'], equals: nodeUuid },
+                },
+                select: { uuid: true },
+            });
+            if (!activeStop) {
+                const commandUuid = randomUUID();
+                await transaction.machineCommands.create({
+                    data: {
+                        uuid: commandUuid,
+                        machineUuid: node.machineUuid!,
+                        kind: 'stop_instance',
+                        idempotencyKey: `stop_instance:${commandUuid}`,
+                        payload: { instanceId: nodeUuid },
+                        deadlineAt: new Date(now.getTime() + 45 * 60 * 1_000),
+                    },
+                });
+            }
+            const healthyPublishedSiblings = await transaction.nodes.count({
+                where: {
+                    machineUuid: node.machineUuid!,
+                    uuid: { not: nodeUuid },
+                    isPublished: true,
+                    lifecycleState: { notIn: ['FAILED', 'DEGRADED'] },
+                },
+            });
+            await transaction.machines.update({
+                where: { uuid: node.machineUuid! },
+                data: { status: healthyPublishedSiblings > 0 ? 'DEGRADED' : 'FAILED' },
+            });
+        });
+    }
+
+    private async queueManagedConfig(
+        node: NodesEntity,
+        forceRestart: boolean,
+        failClosedOnError: boolean,
+    ): Promise<void> {
+        if (!node.machineUuid || !node.activeConfigProfileUuid || !node.port) return;
+        const config = await this.queryBus.execute(
+            new GetPreparedConfigWithUsersQuery(
+                node.uuid,
+                node.activeConfigProfileUuid,
+                node.activeInbounds,
+            ),
+        );
+        if (!config.isOk) {
+            throw new Error(`Failed to generate managed config for ${node.uuid}`);
+        }
+        const credentials = await this.commandBus.execute(new GetNodeJwtCommand());
+        if (!credentials.isOk) {
+            throw new Error('Failed to generate managed node API credentials');
+        }
+        const commandUuid = randomUUID();
+        await this.prisma.$transaction(async (transaction) => {
+            const updatedNode = await transaction.nodes.update({
+                where: { uuid: node.uuid },
+                data: {
+                    desiredRevision: { increment: 1 },
+                    lifecycleState: 'PROVISIONING',
+                },
+                select: { desiredRevision: true },
+            });
+            const deadlineAt = new Date(Date.now() + 45 * 60 * 1_000);
+            const payload = {
+                instanceId: node.uuid,
+                revision: updatedNode.desiredRevision,
+                failClosedOnError,
+                controlPort: node.port!,
+                jwtToken: credentials.response.jwtToken,
+                clientCert: credentials.response.clientCert,
+                clientKey: credentials.response.clientKey,
+                caCert: credentials.response.caCert,
+                xrayConfig: renderManagedConfig(
+                    config.response.config as Record<string, unknown>,
+                    node,
+                ),
+                internals: {
+                    hashes: config.response.hashesPayload,
+                    forceRestart,
+                },
+            };
+            const queued = await transaction.machineCommands.findFirst({
+                where: {
+                    machineUuid: node.machineUuid!,
+                    kind: 'apply_config',
+                    status: 'QUEUED',
+                    payload: { path: ['instanceId'], equals: node.uuid },
+                },
+                orderBy: { queueSequence: 'desc' },
+                select: { uuid: true, payload: true },
+            });
+            const effectivePayload = {
+                ...payload,
+                failClosedOnError:
+                    failClosedOnError ||
+                    (queued?.payload as Record<string, unknown> | undefined)?.failClosedOnError ===
+                        true,
+            };
+            if (queued) {
+                const replaced = await transaction.machineCommands.updateMany({
+                    where: { uuid: queued.uuid, status: 'QUEUED' },
+                    data: { payload: effectivePayload, deadlineAt },
+                });
+                if (replaced.count === 1) return;
+            }
+            await transaction.machineCommands.create({
+                data: {
+                    uuid: commandUuid,
+                    machineUuid: node.machineUuid!,
+                    kind: 'apply_config',
+                    idempotencyKey: `apply_config:${commandUuid}`,
+                    payload: effectivePayload,
+                    deadlineAt,
+                },
+            });
+        });
     }
 }

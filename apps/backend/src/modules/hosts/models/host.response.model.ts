@@ -28,6 +28,8 @@ export class HostResponseModel {
     public serverDescription: null | string;
     public pinnedPeerCertSha256: string | null;
     public verifyPeerCertByName: string | null;
+    public realityPublicKey: string | null;
+    public realityShortId: string | null;
 
     public shuffleHost: boolean;
     public mihomoX25519: boolean;
@@ -73,6 +75,8 @@ export class HostResponseModel {
         this.serverDescription = data.serverDescription;
         this.pinnedPeerCertSha256 = data.pinnedPeerCertSha256;
         this.verifyPeerCertByName = data.verifyPeerCertByName;
+        this.realityPublicKey = data.realityPublicKey;
+        this.realityShortId = data.realityShortId;
         this.shuffleHost = data.shuffleHost;
         this.mihomoX25519 = data.mihomoX25519;
         this.mihomoIpVersion = data.mihomoIpVersion;

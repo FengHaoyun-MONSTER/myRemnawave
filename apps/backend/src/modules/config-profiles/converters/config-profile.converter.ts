@@ -16,6 +16,10 @@ const entityToModel = (entity: ConfigProfileEntity): ConfigProfiles => {
         viewPosition: entity.viewPosition,
         name: entity.name,
         config: entity.config,
+        templateKey: entity.templateKey,
+        templateVersion: entity.templateVersion,
+        isSystem: entity.isSystem,
+        isImmutable: entity.isImmutable,
         createdAt: entity.createdAt,
         updatedAt: entity.updatedAt,
     };

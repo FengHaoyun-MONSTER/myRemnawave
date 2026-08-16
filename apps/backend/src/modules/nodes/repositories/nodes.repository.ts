@@ -124,12 +124,14 @@ export class NodesRepository implements ICrud<NodesEntity> {
     public async findConnectedNodesWithoutInbounds(): Promise<
         {
             uuid: string;
+            machineUuid: string | null;
             connectionOpts: INodeConnectionOpts;
         }[]
     > {
         const result = await this.prisma.tx.nodes.findMany({
             select: {
                 uuid: true,
+                machineUuid: true,
                 address: true,
                 port: true,
                 proxyUrl: true,
@@ -145,6 +147,7 @@ export class NodesRepository implements ICrud<NodesEntity> {
 
         return result.map((value) => ({
             uuid: value.uuid,
+            machineUuid: value.machineUuid,
             connectionOpts: {
                 address: value.address,
                 port: value.port,

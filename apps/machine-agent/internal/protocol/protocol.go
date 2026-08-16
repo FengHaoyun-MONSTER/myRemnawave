@@ -31,6 +31,7 @@ const (
 	CommandStopInstance         = "stop_instance"
 	CommandDrainInstance        = "drain_instance"
 	CommandInspectInstance      = "inspect_instance"
+	CommandApplyConfig          = "apply_config"
 	CommandStageUpdate          = "stage_update"
 	CommandApplyUpdate          = "apply_update"
 	CommandVerifyUpdate         = "verify_update"
@@ -183,6 +184,7 @@ func IsKnownCommand(kind string) bool {
 		CommandStopInstance,
 		CommandDrainInstance,
 		CommandInspectInstance,
+		CommandApplyConfig,
 		CommandStageUpdate,
 		CommandApplyUpdate,
 		CommandVerifyUpdate,

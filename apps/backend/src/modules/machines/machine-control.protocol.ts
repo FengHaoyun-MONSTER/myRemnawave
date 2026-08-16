@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const MACHINE_CONTROL_PROTOCOL_VERSION = 1;
-export const MACHINE_CONTROL_MAX_MESSAGE_BYTES = 1 << 20;
+export const MACHINE_CONTROL_MAX_MESSAGE_BYTES = 4 << 20;
 
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
 

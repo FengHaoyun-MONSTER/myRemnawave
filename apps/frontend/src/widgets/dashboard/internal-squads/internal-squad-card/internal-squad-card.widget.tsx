@@ -36,7 +36,7 @@ export function InternalSquadCardWidget(props: IProps) {
     const { t } = useTranslation()
 
     const { membersCount } = internalSquad.info
-    const { inboundsCount } = internalSquad.info
+    const { nodesCount } = internalSquad.info
     const isActive = membersCount > 0
 
     const handleOpenInbounds = () => {
@@ -65,7 +65,7 @@ export function InternalSquadCardWidget(props: IProps) {
                                     size="lg"
                                     variant="soft"
                                 >
-                                    {formatInt(inboundsCount, {
+                                    {formatInt(nodesCount, {
                                         thousandSeparator: ','
                                     })}
                                 </Badge>

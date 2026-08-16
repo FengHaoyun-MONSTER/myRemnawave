@@ -26,7 +26,7 @@ export const CreateInternalSquadContent = (props: IProps) => {
         validateOnChange: true,
         validate: (value) => {
             const result = CreateInternalSquadCommand.RequestBodySchema.omit({
-                inbounds: true
+                nodes: true
             }).safeParse({ name: value })
             return result.success ? null : result.error.issues[0]?.message
         }
@@ -56,7 +56,7 @@ export const CreateInternalSquadContent = (props: IProps) => {
                 createInternalSquad({
                     variables: {
                         name: nameField.getValue(),
-                        inbounds: []
+                        nodes: []
                     }
                 })
             }}

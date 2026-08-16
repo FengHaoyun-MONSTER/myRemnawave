@@ -49,7 +49,7 @@ export const InternalSquadCardShared = memo((props: IProps) => {
                         })}{' '}
                     </Badge>
                     <Badge color="blue" leftSection={<PiTag size="16" />} size="md" variant="light">
-                        {internalSquad.info.inboundsCount}
+                        {internalSquad.info.nodesCount}
                     </Badge>
                 </Group>
             </Group>

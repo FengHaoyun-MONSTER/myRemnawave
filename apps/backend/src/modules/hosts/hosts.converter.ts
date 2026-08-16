@@ -32,6 +32,8 @@ const entityToModel = (entity: HostsEntity): Hosts => {
         serverDescription: entity.serverDescription,
         pinnedPeerCertSha256: entity.pinnedPeerCertSha256,
         verifyPeerCertByName: entity.verifyPeerCertByName,
+        realityPublicKey: entity.realityPublicKey,
+        realityShortId: entity.realityShortId,
         shuffleHost: entity.shuffleHost,
         mihomoX25519: entity.mihomoX25519,
         mihomoIpVersion: entity.mihomoIpVersion,

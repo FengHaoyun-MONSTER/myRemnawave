@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package instance
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+type fakeRunner struct {
+	calls [][]string
+}
+
+func (f *fakeRunner) Run(_ context.Context, arguments ...string) ([]byte, error) {
+	f.calls = append(f.calls, append([]string(nil), arguments...))
+	if len(arguments) >= 2 && arguments[0] == "network" && arguments[1] == "inspect" {
+		return nil, errors.New("not found")
+	}
+	if len(arguments) > 0 && arguments[0] == "inspect" {
+		return nil, errors.New("not found")
+	}
+	return []byte("ok"), nil
+}
+
+func TestReconcileRealityInstance(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{}
+	request := Request{
+		InstanceID:   "123e4567-e89b-42d3-a456-426614174000",
+		Protocol:     "VLESS_REALITY",
+		Image:        "remnawave/node@sha256:" + strings.Repeat("a", 64),
+		ControlPort:  2222,
+		ExternalPort: 443,
+		Network:      "tcp",
+		SecretKey:    strings.Repeat("A", 120),
+	}
+	payload, _ := json.Marshal(request)
+	resultRaw, err := (Handler{ManagedRoot: root, Runner: runner}).Execute(context.Background(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := resultRaw.(Result)
+	if result.RealityPublicKey == "" || len(result.RealityShortID) != 16 {
+		t.Fatalf("Reality material was not returned: %#v", result)
+	}
+	envPath := filepath.Join(root, "instances", request.InstanceID, "node.env")
+	info, err := os.Stat(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("node.env permissions = %o", info.Mode().Perm())
+	}
+	for _, call := range runner.calls {
+		joined := strings.Join(call, " ")
+		if strings.Contains(joined, request.SecretKey) {
+			t.Fatal("secret key leaked into docker process arguments")
+		}
+	}
+}
+
+func TestRejectsUnpinnedImage(t *testing.T) {
+	request := Request{
+		InstanceID:   "123e4567-e89b-42d3-a456-426614174000",
+		Protocol:     "VLESS_REALITY",
+		Image:        "remnawave/node:latest",
+		ControlPort:  2222,
+		ExternalPort: 443,
+		Network:      "tcp",
+		SecretKey:    strings.Repeat("A", 120),
+	}
+	if err := validate(request); err == nil {
+		t.Fatal("expected unpinned image to be rejected")
+	}
+}

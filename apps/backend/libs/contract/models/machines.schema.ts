@@ -23,6 +23,8 @@ export const WARP_STATUS = [
     'FAILED',
 ] as const;
 
+const DateSchema = z.union([z.date(), z.iso.datetime().transform((value) => new Date(value))]);
+
 export const MachineSchema = z.object({
     uuid: z.uuid(),
     name: z.string(),
@@ -33,20 +35,20 @@ export const MachineSchema = z.object({
     note: z.string().nullable(),
     agentVersion: z.string().nullable(),
     agentCapabilities: z.array(z.string()),
-    agentConnectedAt: z.date().nullable(),
-    agentLastSeenAt: z.date().nullable(),
+    agentConnectedAt: DateSchema.nullable(),
+    agentLastSeenAt: DateSchema.nullable(),
     systemInfo: z.unknown().nullable(),
-    clientCertExpiresAt: z.date().nullable(),
+    clientCertExpiresAt: DateSchema.nullable(),
     warpStatus: z.enum(WARP_STATUS),
     warpProxyPort: z.int().nullable(),
-    warpLastChecked: z.date().nullable(),
-    archivedAt: z.date().nullable(),
-    createdAt: z.date(),
-    updatedAt: z.date(),
+    warpLastChecked: DateSchema.nullable(),
+    archivedAt: DateSchema.nullable(),
+    createdAt: DateSchema,
+    updatedAt: DateSchema,
 });
 
 export const MachineEnrollmentTokenSchema = z.object({
     machine: MachineSchema,
     enrollmentToken: z.string(),
-    enrollmentExpiresAt: z.date(),
+    enrollmentExpiresAt: DateSchema,
 });

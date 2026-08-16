@@ -24,7 +24,11 @@ export class AddUsersToNodeHandler implements IEventHandler<AddUsersToNodeEvent>
             if (!grantedNodes.isOk) return;
             await Promise.all(
                 grantedNodes.response.map((nodeUuid) =>
-                    this.nodesQueuesService.startNode({ nodeUuid, force: true }),
+                    this.nodesQueuesService.startNode({
+                        nodeUuid,
+                        force: false,
+                        managedConfigUpdate: true,
+                    }),
                 ),
             );
         } catch (error) {

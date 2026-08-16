@@ -38,6 +38,69 @@ const inventorySchema = z
     })
     .strict();
 
+const preflightResultSchema = z
+    .object({
+        system: inventorySchema,
+        checks: z
+            .array(
+                z
+                    .object({
+                        name: z.string().min(1).max(128),
+                        ok: z.boolean(),
+                        message: z.string().max(1024),
+                    })
+                    .strict(),
+            )
+            .max(64),
+        ok: z.boolean(),
+    })
+    .strict();
+
+const reconcileInstanceResultSchema = z
+    .object({
+        instanceId: z.uuid(),
+        containerName: z.string().regex(/^myremnawave-[0-9a-f]{16}$/),
+        configHash: z.string().regex(/^[0-9a-f]{64}$/),
+        realityPublicKey: z.string().max(128).optional(),
+        realityShortId: z
+            .string()
+            .regex(/^[0-9a-f]{16}$/)
+            .optional(),
+    })
+    .strict();
+
+const reconcileCertificateResultSchema = z
+    .object({
+        instanceId: z.uuid(),
+        domain: z.string().min(1).max(253),
+        expiresAt: z.iso.datetime(),
+        fingerprintSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    })
+    .strict();
+
+const reconcileWarpResultSchema = z
+    .object({
+        enabled: z.literal(true),
+        proxyPort: z.literal(40000),
+        version: z.string().min(1).max(128),
+        status: z.literal('CONNECTED'),
+    })
+    .strict();
+
+const applyConfigResultSchema = z
+    .object({
+        instanceId: z.uuid(),
+        applied: z.literal(true),
+    })
+    .strict();
+
+const lifecycleResultSchema = z
+    .object({
+        instanceId: z.uuid(),
+        state: z.enum(['RUNNING', 'STOPPED']),
+    })
+    .strict();
+
 interface SessionState {
     machineUuid: string;
     helloReceived: boolean;
@@ -131,6 +194,13 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
                 this.server.close(() => resolve());
             }),
         ]);
+    }
+
+    async dispatchReady(machineUuid: string): Promise<void> {
+        const session = this.sessions.get(machineUuid);
+        if (session?.readyState === WebSocket.OPEN) {
+            await this.sendReadyCommands(session, machineUuid);
+        }
     }
 
     private async handleUpgrade(
@@ -238,7 +308,9 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
             });
             if (!connected) throw new Error('machine is no longer eligible to connect');
             state.helloReceived = true;
+            await this.machinesRepository.resetRunningCommands(state.machineUuid);
             await this.machinesRepository.ensureInventoryCommand(state.machineUuid, new Date());
+            await this.machinesRepository.ensureWarpCommand(state.machineUuid, new Date());
             await this.sendReadyCommands(webSocket, state.machineUuid);
             return;
         }
@@ -251,6 +323,7 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
                 new Date(),
             );
             if (!updated) throw new Error('machine is no longer eligible to connect');
+            await this.machinesRepository.ensureWarpCommand(state.machineUuid, new Date());
             await this.sendReadyCommands(webSocket, state.machineUuid);
             return;
         }
@@ -263,15 +336,33 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
         );
         if (!commandKind) throw new Error('unknown or already completed command result');
         const validatedResult =
-            commandKind === 'inventory' && result.status === 'succeeded'
-                ? inventorySchema.parse(result.payload)
-                : result.payload;
+            result.status !== 'succeeded'
+                ? result.payload
+                : commandKind === 'inventory'
+                  ? inventorySchema.parse(result.payload)
+                  : commandKind === 'preflight'
+                    ? preflightResultSchema.parse(result.payload)
+                    : commandKind === 'reconcile_instance'
+                      ? reconcileInstanceResultSchema.parse(result.payload)
+                      : commandKind === 'reconcile_certificate'
+                        ? reconcileCertificateResultSchema.parse(result.payload)
+                        : commandKind === 'reconcile_warp'
+                          ? reconcileWarpResultSchema.parse(result.payload)
+                          : commandKind === 'apply_config'
+                            ? applyConfigResultSchema.parse(result.payload)
+                            : commandKind === 'start_instance' || commandKind === 'stop_instance'
+                              ? lifecycleResultSchema.parse(result.payload)
+                              : result.payload;
+        const preflightFailed =
+            commandKind === 'preflight' &&
+            result.status === 'succeeded' &&
+            preflightResultSchema.parse(validatedResult).ok === false;
         const accepted = await this.machinesRepository.completeCommand({
             machineUuid: state.machineUuid,
             commandUuid: result.commandId,
             idempotencyKey: result.idempotencyKey,
-            status: result.status,
-            errorCode: result.errorCode,
+            status: preflightFailed ? 'failed' : result.status,
+            errorCode: preflightFailed ? 'PREFLIGHT_FAILED' : result.errorCode,
             result: validatedResult,
             completedAt: new Date(),
         });

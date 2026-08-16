@@ -20,6 +20,9 @@ import {
     EnrollMachineCommand,
     GetMachineCommand,
     GetMachinesCommand,
+    ProvisionMachineCommand,
+    PublishMachineCommand,
+    RetryMachineCommand,
     RotateMachineEnrollmentTokenCommand,
 } from '@libs/contracts/commands';
 
@@ -31,6 +34,15 @@ import {
     GetMachineParamDto,
     GetMachineResponseDto,
     GetMachinesResponseDto,
+    ProvisionMachineBodyDto,
+    ProvisionMachineParamDto,
+    ProvisionMachineResponseDto,
+    PublishMachineBodyDto,
+    PublishMachineParamDto,
+    PublishMachineResponseDto,
+    RetryMachineBodyDto,
+    RetryMachineParamDto,
+    RetryMachineResponseDto,
     RotateMachineEnrollmentTokenParamDto,
     RotateMachineEnrollmentTokenResponseDto,
 } from './dtos/machines.dto';
@@ -82,6 +94,39 @@ export class MachinesController {
         return {
             response: await this.machinesService.rotateEnrollmentToken(params.uuid),
         };
+    }
+
+    @Endpoint({
+        type: ProvisionMachineResponseDto,
+        command: ProvisionMachineCommand,
+        httpCode: HttpStatus.CREATED,
+    })
+    async provisionMachine(
+        @Param() params: ProvisionMachineParamDto,
+        @Body() body: ProvisionMachineBodyDto,
+    ) {
+        return { response: await this.machinesService.provision(params.uuid, body) };
+    }
+
+    @Endpoint({
+        type: RetryMachineResponseDto,
+        command: RetryMachineCommand,
+        httpCode: HttpStatus.OK,
+    })
+    async retryMachine(@Param() params: RetryMachineParamDto, @Body() body: RetryMachineBodyDto) {
+        return { response: await this.machinesService.retry(params.uuid, body) };
+    }
+
+    @Endpoint({
+        type: PublishMachineResponseDto,
+        command: PublishMachineCommand,
+        httpCode: HttpStatus.OK,
+    })
+    async publishMachine(
+        @Param() params: PublishMachineParamDto,
+        @Body() body: PublishMachineBodyDto,
+    ) {
+        return { response: await this.machinesService.publish(params.uuid, body) };
     }
 }
 

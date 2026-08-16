@@ -1,4 +1,5 @@
 import { Queue } from 'bullmq';
+import { randomUUID } from 'node:crypto';
 
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
@@ -81,9 +82,14 @@ export class NodesQueuesService implements OnApplicationBootstrap {
         await this.startAllNodesQueue.setGlobalConcurrency(1);
     }
 
-    public async startNode(payload: { nodeUuid: string; force?: boolean }) {
+    public async startNode(payload: {
+        nodeUuid: string;
+        force?: boolean;
+        managedConfigUpdate?: boolean;
+        failClosedOnError?: boolean;
+    }) {
         return this.startNodeQueue.add(NODES_JOB_NAMES.START_NODE, payload, {
-            jobId: `${NODES_JOB_NAMES.START_NODE}-${payload.nodeUuid}`,
+            jobId: `${NODES_JOB_NAMES.START_NODE}-${payload.nodeUuid}${payload.managedConfigUpdate ? `-${randomUUID()}` : ''}`,
             removeOnComplete: true,
             removeOnFail: true,
         });

@@ -32,6 +32,12 @@ const (
 var capabilities = []string{
 	protocol.CommandInventory,
 	protocol.CommandPreflight,
+	protocol.CommandReconcileInstance,
+	protocol.CommandReconcileCertificate,
+	protocol.CommandReconcileWARP,
+	protocol.CommandApplyConfig,
+	protocol.CommandStartInstance,
+	protocol.CommandStopInstance,
 }
 
 type Client struct {

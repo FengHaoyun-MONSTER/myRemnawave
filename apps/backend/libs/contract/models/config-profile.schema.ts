@@ -7,6 +7,10 @@ export const ConfigProfileSchema = z.object({
     viewPosition: z.int(),
     name: z.string(),
     config: z.unknown(),
+    templateKey: z.enum(['VLESS_REALITY', 'VLESS_TLS_VISION', 'HYSTERIA2']).nullable(),
+    templateVersion: z.int().positive().nullable(),
+    isSystem: z.boolean(),
+    isImmutable: z.boolean(),
     inbounds: z.array(ConfigProfileInboundsSchema),
     nodes: z.array(
         z.object({

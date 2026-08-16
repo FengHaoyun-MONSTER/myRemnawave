@@ -5,6 +5,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -32,6 +33,12 @@ type successfulHandler struct{}
 
 func (successfulHandler) Execute(_ context.Context, _ json.RawMessage) (any, error) {
 	return map[string]bool{"ok": true}, nil
+}
+
+type failingHandler struct{}
+
+func (failingHandler) Execute(_ context.Context, _ json.RawMessage) (any, error) {
+	return nil, errors.New("CONFIG_APPLY_FAILED_ROLLED_BACK: invalid route")
 }
 
 func TestExecutorReplaysIdempotentResult(t *testing.T) {
@@ -72,5 +79,25 @@ func TestExecutorReportsUnavailableCapability(t *testing.T) {
 	})
 	if result.Status != protocol.ResultUnsupported || result.ErrorCode != "CAPABILITY_NOT_AVAILABLE" {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestExecutorPreservesAllowlistedErrorCodePrefix(t *testing.T) {
+	store := &memoryStore{results: make(map[string]protocol.CommandResult)}
+	executor, err := New(store, time.Minute, map[string]Handler{
+		protocol.CommandApplyConfig: failingHandler{},
+	})
+	if err != nil {
+		t.Fatalf("create executor: %v", err)
+	}
+	result := executor.Execute(context.Background(), protocol.Command{
+		ID:             "command-1",
+		Kind:           protocol.CommandApplyConfig,
+		IdempotencyKey: "key-1",
+		Deadline:       time.Now().Add(time.Minute),
+		Payload:        json.RawMessage(`{}`),
+	})
+	if result.ErrorCode != "CONFIG_APPLY_FAILED_ROLLED_BACK" {
+		t.Fatalf("unexpected error code: %q", result.ErrorCode)
 	}
 }

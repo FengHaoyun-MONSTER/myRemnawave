@@ -34,6 +34,8 @@ export const HostsSchema = z.object({
     vlessRouteId: z.int().min(0).max(65535).nullable(),
     pinnedPeerCertSha256: z.string().nullable(),
     verifyPeerCertByName: z.string().nullable(),
+    realityPublicKey: z.string().nullable(),
+    realityShortId: z.string().nullable(),
     shuffleHost: z.boolean(),
     mihomoX25519: z.boolean(),
     mihomoIpVersion: z.enum(MIHOMO_IP_VERSION).nullable(),

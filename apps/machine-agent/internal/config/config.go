@@ -17,11 +17,11 @@ const (
 	defaultStateDir        = "/var/lib/myremnawave-agent"
 	defaultManagedRoot     = "/opt/myremnawave"
 	defaultHeartbeat       = 30 * time.Second
-	defaultCommandTimeout  = 5 * time.Minute
+	defaultCommandTimeout  = 15 * time.Minute
 	defaultReconnectMin    = time.Second
 	defaultReconnectMax    = time.Minute
-	defaultMaxMessageBytes = int64(1 << 20)
-	hardMaxMessageBytes    = int64(4 << 20)
+	defaultMaxMessageBytes = int64(4 << 20)
+	hardMaxMessageBytes    = int64(8 << 20)
 )
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)

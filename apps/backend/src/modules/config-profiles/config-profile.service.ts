@@ -62,7 +62,6 @@ export class ConfigProfileService {
             if (!configProfile) {
                 return fail(ERRORS.CONFIG_PROFILE_NOT_FOUND);
             }
-
             configProfile.config = new XRayConfig(configProfile.config as object).getSortedConfig();
 
             return ok(new GetConfigProfileByUuidResponseModel(configProfile));
@@ -111,6 +110,9 @@ export class ConfigProfileService {
 
             if (!configProfile) {
                 return fail(ERRORS.CONFIG_PROFILE_NOT_FOUND);
+            }
+            if (configProfile.isImmutable) {
+                return fail(ERRORS.SYSTEM_CONFIG_PROFILE_IMMUTABLE);
             }
 
             for (const node of configProfile.nodes) {
@@ -202,6 +204,9 @@ export class ConfigProfileService {
 
             if (!existingConfigProfile) {
                 return fail(ERRORS.CONFIG_PROFILE_NOT_FOUND);
+            }
+            if (existingConfigProfile.isImmutable) {
+                return fail(ERRORS.SYSTEM_CONFIG_PROFILE_IMMUTABLE);
             }
 
             if (!name && !config) {

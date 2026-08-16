@@ -176,6 +176,13 @@ model Nodes {
   isPublished     Boolean @default(false) @map("is_published")
   externalPort    Int?    @map("external_port")
   externalNetwork String? @map("external_network") @db.VarChar(3)
+  protocolSettings Json   @default("{}") @map("protocol_settings")
+  desiredRevision Int     @default(0) @map("desired_revision")
+  appliedRevision Int     @default(0) @map("applied_revision")
+  certificateMode String? @map("certificate_mode") @db.VarChar(32)
+  certificateStatus String @default("NOT_REQUIRED") @map("certificate_status") @db.VarChar(32)
+  certificateExpiresAt DateTime? @map("certificate_expires_at")
+  certificateBlockedAt DateTime? @map("certificate_blocked_at")
 
   activeConfigProfileUuid String? @map("active_config_profile_uuid") @db.Uuid
   activePluginUuid        String? @map("active_plugin_uuid") @db.Uuid
@@ -270,6 +277,7 @@ model Machines {
 
 model MachineCommands {
   uuid           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  queueSequence  BigInt    @default(autoincrement()) @map("queue_sequence")
   machineUuid    String    @map("machine_uuid") @db.Uuid
   kind           String    @map("kind") @db.VarChar(64)
   idempotencyKey String    @unique @map("idempotency_key") @db.VarChar(128)
@@ -286,6 +294,7 @@ model MachineCommands {
   machine Machines @relation(fields: [machineUuid], references: [uuid], onDelete: Cascade)
 
   @@index([machineUuid, status])
+  @@index([machineUuid, status, queueSequence])
   @@index([deadlineAt])
   @@map("machine_commands")
 }
@@ -344,6 +353,8 @@ model Hosts {
   vlessRouteId                 Int?     @map("vless_route_id")
   pinnedPeerCertSha256         String?  @map("pinned_peer_cert_sha256")
   verifyPeerCertByName         String?  @map("verify_peer_cert_by_name")
+  realityPublicKey             String?  @map("reality_public_key") @db.VarChar(128)
+  realityShortId               String?  @map("reality_short_id") @db.VarChar(16)
   shuffleHost                  Boolean  @default(false) @map("shuffle_host")
   mihomoX25519                 Boolean  @default(false) @map("mihomo_x25519")
   mihomoIpVersion              String?  @map("mihomo_ip_version") // ENUM: dual, ipv4, ipv6, ipv4-prefer, ipv6-prefer
@@ -490,6 +501,10 @@ model ConfigProfiles {
   viewPosition Int    @default(autoincrement()) @map("view_position")
   name         String @unique @map("name")
   config       Json   @map("config")
+  templateKey     String? @map("template_key") @db.VarChar(32)
+  templateVersion Int?    @map("template_version")
+  isSystem        Boolean @default(false) @map("is_system")
+  isImmutable     Boolean @default(false) @map("is_immutable")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
@@ -498,6 +513,7 @@ model ConfigProfiles {
   configProfileInbounds ConfigProfileInbounds[]
   hosts                 Hosts[]
 
+  @@unique([templateKey, templateVersion])
   @@map("config_profiles")
 }
 

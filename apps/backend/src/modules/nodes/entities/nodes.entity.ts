@@ -21,6 +21,19 @@ export class NodesEntity implements Nodes {
     public isPublished: boolean;
     public externalPort: number | null;
     public externalNetwork: 'tcp' | 'udp' | null;
+    public protocolSettings: Record<string, unknown>;
+    public desiredRevision: number;
+    public appliedRevision: number;
+    public certificateMode: 'HTTP_01' | 'IMPORT_EXISTING' | null;
+    public certificateStatus:
+        | 'NOT_REQUIRED'
+        | 'PENDING'
+        | 'ISSUING'
+        | 'VALID'
+        | 'RENEWING'
+        | 'FAILED';
+    public certificateExpiresAt: Date | null;
+    public certificateBlockedAt: Date | null;
     public isConnected: boolean;
     public isConnecting: boolean;
     public isDisabled: boolean;

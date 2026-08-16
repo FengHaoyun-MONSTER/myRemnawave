@@ -81,6 +81,12 @@ export const useMobileMenuSections = (): MenuItem[] => {
                     id: 'hosts'
                 },
                 {
+                    name: 'Machines',
+                    href: ROUTES.DASHBOARD.MANAGEMENT.MACHINES,
+                    icon: HiServer,
+                    id: 'machines'
+                },
+                {
                     name: t('constants.nodes'),
                     href: ROUTES.DASHBOARD.MANAGEMENT.NODES,
                     icon: PiCpu,

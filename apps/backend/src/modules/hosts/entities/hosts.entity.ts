@@ -26,6 +26,8 @@ export class HostsEntity implements Hosts {
     serverDescription: null | string;
     pinnedPeerCertSha256: string | null;
     verifyPeerCertByName: string | null;
+    realityPublicKey: string | null;
+    realityShortId: string | null;
     mihomoIpVersion: TMihomoIpVersion | null;
     tags: string[];
     isHidden: boolean;

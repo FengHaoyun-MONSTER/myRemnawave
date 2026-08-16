@@ -1189,4 +1189,9 @@ export const ERRORS = {
         message: 'Sync snippet error',
         httpCode: 500,
     },
+    SYSTEM_CONFIG_PROFILE_IMMUTABLE: {
+        code: 'A238',
+        message: 'System protocol templates are immutable; create a new template version instead',
+        httpCode: 409,
+    },
 } as const;

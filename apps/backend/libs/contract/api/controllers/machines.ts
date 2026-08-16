@@ -9,6 +9,9 @@ export const MACHINES_ROUTES = {
     ACTIONS: {
         ROTATE_ENROLLMENT_TOKEN: (uuid: string) =>
             `${uuid}/${ACTIONS_ROUTE}/rotate-enrollment-token`,
+        PROVISION: (uuid: string) => `${uuid}/${ACTIONS_ROUTE}/provision`,
+        RETRY: (uuid: string) => `${uuid}/${ACTIONS_ROUTE}/retry`,
+        PUBLISH: (uuid: string) => `${uuid}/${ACTIONS_ROUTE}/publish`,
     },
 } as const;
 

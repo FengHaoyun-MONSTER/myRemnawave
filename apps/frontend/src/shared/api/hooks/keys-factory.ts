@@ -10,6 +10,7 @@ import { hostsQueryKeys } from './hosts/hosts.query.hooks'
 import { hwidUserDevicesQueryKeys } from './hwid-user-devices/hwid-user-devices.query.hooks'
 import { infraBillingQueryKeys } from './infra-billing/infra-billing.query.hooks'
 import { internalSquadsQueryKeys } from './internal-squads/internal-squads.query.hooks'
+import { machinesQueryKeys } from './machines/machines.query.hooks'
 import { nodePluginsQueryKeys } from './node-plugins/node-plugins.query.hooks'
 import { nodesQueryKeys } from './nodes/nodes.query.hooks'
 import { passkeysQueryKeys } from './passkeys/passkeys.query.hooks'
@@ -43,7 +44,8 @@ export const QueryKeys = mergeQueryKeys(
     subpageConfigsQueryKeys,
     bandwidthStatsQueryKeys,
     connectionsQueryKeys,
-    nodePluginsQueryKeys
+    nodePluginsQueryKeys,
+    machinesQueryKeys
 )
 
 export type TQueryKeys = inferQueryKeyStore<typeof QueryKeys>

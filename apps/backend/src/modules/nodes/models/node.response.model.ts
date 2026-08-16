@@ -21,6 +21,18 @@ export class NodeResponseModel {
     public isPublished: boolean;
     public externalPort: number | null;
     public externalNetwork: 'tcp' | 'udp' | null;
+    public protocolSettings: Record<string, unknown>;
+    public desiredRevision: number;
+    public appliedRevision: number;
+    public certificateMode: 'HTTP_01' | 'IMPORT_EXISTING' | null;
+    public certificateStatus:
+        | 'NOT_REQUIRED'
+        | 'PENDING'
+        | 'ISSUING'
+        | 'VALID'
+        | 'RENEWING'
+        | 'FAILED';
+    public certificateExpiresAt: Date | null;
     public isConnected: boolean;
     public isConnecting: boolean;
     public isDisabled: boolean;
@@ -68,6 +80,12 @@ export class NodeResponseModel {
         this.isPublished = data.isPublished;
         this.externalPort = data.externalPort;
         this.externalNetwork = data.externalNetwork;
+        this.protocolSettings = data.protocolSettings;
+        this.desiredRevision = data.desiredRevision;
+        this.appliedRevision = data.appliedRevision;
+        this.certificateMode = data.certificateMode;
+        this.certificateStatus = data.certificateStatus;
+        this.certificateExpiresAt = data.certificateExpiresAt;
         this.isConnected = data.isConnected;
         this.isConnecting = data.isConnecting;
         this.isDisabled = data.isDisabled;

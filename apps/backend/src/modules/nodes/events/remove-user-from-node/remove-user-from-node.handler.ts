@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { IEventHandler, EventsHandler } from '@nestjs/cqrs';
+import { EventsHandler, IEventHandler } from '@nestjs/cqrs';
 
 import { RemoveUserCommand as RemoveUserFromNodeCommandSdk } from '@remnawave/node-contract';
 
@@ -24,6 +24,18 @@ export class RemoveUserFromNodeHandler implements IEventHandler<RemoveUserFromNo
                 return;
             }
 
+            const managedNodes = nodes.filter((node) => node.machineUuid !== null);
+            await Promise.all(
+                managedNodes.map((node) =>
+                    this.nodesQueuesService.startNode({
+                        nodeUuid: node.uuid,
+                        force: false,
+                        managedConfigUpdate: true,
+                        failClosedOnError: true,
+                    }),
+                ),
+            );
+
             const userData: RemoveUserFromNodeCommandSdk.Request = {
                 username: event.id.toString(),
                 hashData: {
@@ -32,10 +44,12 @@ export class RemoveUserFromNodeHandler implements IEventHandler<RemoveUserFromNo
             };
 
             await this.nodesQueuesService.removeUserFromNodeBulk(
-                nodes.map((node) => ({
-                    data: userData,
-                    node: node.connectionOpts,
-                })),
+                nodes
+                    .filter((node) => node.machineUuid === null)
+                    .map((node) => ({
+                        data: userData,
+                        node: node.connectionOpts,
+                    })),
             );
 
             return;

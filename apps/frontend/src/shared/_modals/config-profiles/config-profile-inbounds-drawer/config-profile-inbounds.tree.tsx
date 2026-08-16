@@ -78,15 +78,14 @@ export function ConfigProfileInboundsTree(props: IProps) {
         const colorHash = new ColorHash({ lightness: 0.7, saturation: 0.6 })
 
         return inbounds.map((inbound) => {
-            const filteredSquads = internalSquads.filter((squad) =>
-                inbound.activeSquads.some((squadUuid) => squadUuid === squad.uuid)
-            )
+            // Runtime templates are reusable and intentionally carry no squad grants.
+            const filteredSquads: InternalSquad[] = []
 
             return {
                 children: filteredSquads.map((squad) => ({
                     label: squad.name,
                     nodeProps: {
-                        inboundsCount: squad.info.inboundsCount,
+                        inboundsCount: squad.info.nodesCount,
                         kind: 'squad' as const,
                         membersCount: squad.info.membersCount,
                         squadUuid: squad.uuid

@@ -425,14 +425,15 @@ export class ResolveProxyConfigService {
             case 'reality': {
                 const reality = streamSettings.realitySettings;
                 const shortIds = reality?.shortIds || [];
-                const shortId = shortIds.length > 0 ? shortIds[0] : '';
+                const shortId =
+                    inputHost.realityShortId ?? (shortIds.length > 0 ? shortIds[0] : '');
 
                 return {
                     security: 'reality',
                     securityOptions: {
                         fingerprint:
                             override(inputHost.fingerprint, reality?.fingerprint) ?? 'chrome',
-                        publicKey: publicKeyMap.get(inboundTag) || '',
+                        publicKey: inputHost.realityPublicKey ?? publicKeyMap.get(inboundTag) ?? '',
                         shortId,
                         serverName: this.resolveFinalServerName(
                             inputHost,

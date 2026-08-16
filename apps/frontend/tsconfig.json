@@ -37,7 +37,8 @@
       "@pages/*": ["./src/pages/*"],
       "@widgets/*": ["./src/widgets/*"],
       "@public/*": ["./public/*"],
-      "@shared/*": ["./src/shared/*"]
+      "@shared/*": ["./src/shared/*"],
+      "@remnawave/backend-contract": ["../backend/libs/contract/index.ts"]
     }
   },
   "include": ["src/**/*", "@types/**/*"],

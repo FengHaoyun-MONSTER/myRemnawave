@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 )
 
 const maxResultMessageBytes = 16 * 1024
+
+var errorCodePrefix = regexp.MustCompile(`^[A-Z][A-Z0-9_]{2,63}$`)
 
 type Handler interface {
 	Execute(ctx context.Context, payload json.RawMessage) (any, error)
@@ -97,6 +100,8 @@ func (e *Executor) Execute(ctx context.Context, command protocol.Command) protoc
 		} else if errors.Is(err, context.DeadlineExceeded) || errors.Is(commandContext.Err(), context.DeadlineExceeded) {
 			code = "COMMAND_TIMEOUT"
 			message = "command exceeded its deadline"
+		} else if prefix, _, found := strings.Cut(message, ":"); found && errorCodePrefix.MatchString(prefix) {
+			code = prefix
 		}
 		return e.persist(command, failedResult(command, code, safeMessage(message)))
 	}

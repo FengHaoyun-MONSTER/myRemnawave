@@ -1,0 +1,46 @@
+name: Release Machine Agent
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/machine-agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/machine-agent/go.mod
+          cache-dependency-path: apps/machine-agent/go.sum
+      - name: Test
+        run: |
+          go test -race ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+          sh -n install.sh
+      - name: Build release binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o myremnawave-agent-linux-amd64 ./cmd/agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o myremnawave-agent-linux-arm64 ./cmd/agent
+          cp packaging/systemd/myremnawave-agent.service .
+          sha256sum myremnawave-agent-linux-amd64 myremnawave-agent-linux-arm64 myremnawave-agent.service > SHA256SUMS
+      - name: Publish immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          myremnawave-agent-linux-amd64
+          myremnawave-agent-linux-arm64
+          myremnawave-agent.service
+          SHA256SUMS
+          --repo "${GITHUB_REPOSITORY}"
+          --verify-tag
+          --generate-notes

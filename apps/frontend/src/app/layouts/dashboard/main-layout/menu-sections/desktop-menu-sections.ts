@@ -73,6 +73,12 @@ export const useDesktopMenuSections = (): MenuItem[] => {
             icon: HiServer,
             section: [
                 {
+                    name: 'Machines',
+                    href: ROUTES.DASHBOARD.MANAGEMENT.MACHINES,
+                    icon: HiServer,
+                    id: 'machines'
+                },
+                {
                     name: t('constants.nodes'),
                     href: ROUTES.DASHBOARD.MANAGEMENT.NODES,
                     icon: HiServer,

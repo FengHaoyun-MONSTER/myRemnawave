@@ -391,7 +391,12 @@ export class InternalSquadService {
     private async reconcileNodes(nodeUuids: string[]): Promise<void> {
         await Promise.all(
             nodeUuids.map((nodeUuid) =>
-                this.nodesQueuesService.startNode({ nodeUuid, force: true }),
+                this.nodesQueuesService.startNode({
+                    nodeUuid,
+                    force: false,
+                    managedConfigUpdate: true,
+                    failClosedOnError: true,
+                }),
             ),
         );
     }
