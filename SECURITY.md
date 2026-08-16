@@ -19,4 +19,3 @@ privately to the repository owner rather than opened as public issues.
 The initial target is a fresh test installation. Existing production data
 migration and production deployment are explicitly outside the approved v1.0
 scope.
-

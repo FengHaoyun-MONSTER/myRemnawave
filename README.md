@@ -32,4 +32,3 @@ Environments and GitHub Actions secrets.
 Remnawave components are licensed under GNU AGPLv3. Imported components retain
 their original license and copyright notices. Project-specific additions will
 use SPDX identifiers and remain AGPL-compatible. See [LICENSES.md](LICENSES.md).
-

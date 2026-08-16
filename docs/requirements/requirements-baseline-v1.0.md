@@ -1,8 +1,10 @@
 # Requirements Baseline v1.0
 
-Status: **Approved for development**  
+Status: **Approved for development**
+
 Approval basis: the user accepted every recommended decision in the strict
-alignment rounds and explicitly authorized the complete development workflow.  
+alignment rounds and explicitly authorized the complete development workflow.
+
 Target: fresh development and test environments only.
 
 ## 1. Business objective
@@ -330,4 +332,3 @@ This baseline is the source of truth for implementation. A discovered conflict
 with upstream architecture, an order-of-magnitude scope change, destructive
 migration, or a new security/permission decision requires a documented baseline
 change before the affected behavior is implemented.
-
