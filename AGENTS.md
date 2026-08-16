@@ -51,5 +51,4 @@ check pass.
   timeouts. Command output is size-limited and redacted before persistence.
 - Database invariants require constraints and transactional multi-row updates.
 - Public API or schema changes require contract, OpenAPI, migration, UI, and
-  test updates in the same change.
-
+test updates in the same change.

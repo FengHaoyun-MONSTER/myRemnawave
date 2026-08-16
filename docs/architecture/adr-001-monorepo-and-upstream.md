@@ -1,6 +1,7 @@
 # ADR-001: Monorepo with tracked Remnawave subtrees
 
-Status: accepted  
+Status: accepted
+
 Date: 2026-08-16
 
 ## Context
@@ -24,5 +25,4 @@ pinned external component until a source change is required.
 - Cross-component changes can be committed and tested atomically.
 - Upstream merges require explicit subtree maintenance and conflict review.
 - The repository remains AGPL-compatible and must publish corresponding source
-  when network users interact with modified AGPL services.
-
+when network users interact with modified AGPL services.

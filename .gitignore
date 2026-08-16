@@ -26,3 +26,4 @@ artifacts/
 reports/
 *.log
 *.pid
+*.exe

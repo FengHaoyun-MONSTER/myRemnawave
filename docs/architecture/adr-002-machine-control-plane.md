@@ -1,6 +1,7 @@
 # ADR-002: Outbound machine control plane
 
-Status: accepted  
+Status: accepted
+
 Date: 2026-08-16
 
 ## Context
@@ -42,4 +43,3 @@ host runtime dependency. The Go WebSocket client is pinned to
 - Certificate rotation and session revocation must work without SSH.
 - The Agent is privileged, so its command schema and filesystem/process
   boundaries receive independent security tests.
-

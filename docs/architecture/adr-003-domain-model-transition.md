@@ -1,6 +1,7 @@
 # ADR-003: Machine plus logical node instances
 
-Status: accepted  
+Status: accepted
+
 Date: 2026-08-16
 
 ## Context
@@ -31,4 +32,3 @@ constraints.
 Existing profile/inbound authorization queries must be replaced together rather
 than partially adapted. Host exclusions remain presentation controls and cannot
 grant runtime access.
-

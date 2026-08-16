@@ -1,0 +1,32 @@
+[Unit]
+Description=myRemnawave Machine Agent
+Documentation=https://github.com/FengHaoyun-MONSTER/myRemnawave
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=/etc/myremnawave-agent/agent.env
+ExecStart=/usr/local/lib/myremnawave-agent/myremnawave-agent
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

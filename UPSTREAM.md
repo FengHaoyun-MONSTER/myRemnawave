@@ -10,4 +10,3 @@ Imported with `git subtree --squash` on 2026-08-16:
 
 Future upstream updates must use subtree pull/merge, retain provenance, and be
 validated against the approved requirements baseline before rollout.
-
