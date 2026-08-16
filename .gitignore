@@ -1,0 +1,29 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.secrets.*
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# JavaScript and build artifacts
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+
+# Runtime and test artifacts
+artifacts/
+reports/
+*.log
+*.pid
+
