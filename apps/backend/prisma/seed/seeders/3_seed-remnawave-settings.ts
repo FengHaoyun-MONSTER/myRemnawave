@@ -104,10 +104,8 @@ export async function seedRemnawaveSettings(prisma: PrismaClient) {
                             data: { [key]: oauthSchemaParseResult.data },
                         });
                     } else {
-                        const storedOauth2Settings = (existingConfig.oauth2Settings ?? {}) as Record<
-                            string,
-                            unknown
-                        >;
+                        const storedOauth2Settings = (existingConfig.oauth2Settings ??
+                            {}) as Record<string, unknown>;
                         const salvagedOauth2Settings: Record<string, unknown> = {};
 
                         for (const provider of Object.keys(Oauth2SettingsSchema.shape) as Array<

@@ -57,6 +57,14 @@ export const configSchema = z
 
         FRONT_END_DOMAIN: z.string(),
         PANEL_DOMAIN: z.string().optional(),
+        MACHINE_CONTROL_PUBLIC_URL: z.string().url().startsWith('wss://').optional(),
+        MACHINE_CONTROL_TLS_CERT_PATH: z.string().optional(),
+        MACHINE_CONTROL_TLS_KEY_PATH: z.string().optional(),
+        MACHINE_CONTROL_PORT: z
+            .string()
+            .default('3010')
+            .transform((port) => parseInt(port, 10))
+            .refine((port) => port > 0 && port <= 65535, 'Port must be between 1 and 65535'),
         METRICS_USER: z.string().min(1),
         METRICS_PASS: z.string().min(1),
         SUB_PUBLIC_DOMAIN: z.string(),
@@ -151,6 +159,22 @@ export const configSchema = z
             .pipe(z.array(z.number()).optional()),
     })
     .superRefine((data, ctx) => {
+        const machineControlValues = [
+            data.MACHINE_CONTROL_PUBLIC_URL,
+            data.MACHINE_CONTROL_TLS_CERT_PATH,
+            data.MACHINE_CONTROL_TLS_KEY_PATH,
+        ];
+        const configuredMachineControlValues = machineControlValues.filter(Boolean).length;
+        if (configuredMachineControlValues !== 0 && configuredMachineControlValues !== 3) {
+            ctx.issues.push({
+                input: data,
+                code: 'custom',
+                message:
+                    'MACHINE_CONTROL_PUBLIC_URL, MACHINE_CONTROL_TLS_CERT_PATH, and MACHINE_CONTROL_TLS_KEY_PATH must be configured together',
+                path: ['MACHINE_CONTROL_PUBLIC_URL'],
+            });
+        }
+
         if (!data.REDIS_SOCKET && (!data.REDIS_HOST || !data.REDIS_PORT)) {
             ctx.issues.push({
                 input: data,

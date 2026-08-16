@@ -10,7 +10,7 @@ export namespace GetSubscriptionByShortUuidByClientTypeCommand {
     export const RequestParamSchema = z.object({
         shortUuid: z.string(),
         clientType: z.enum(REQUEST_TEMPLATE_TYPE, {
-            error: 'Invalid client type.'
+            error: 'Invalid client type.',
         }),
     });
 

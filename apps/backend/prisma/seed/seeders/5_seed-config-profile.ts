@@ -28,35 +28,5 @@ export async function seedDefaultConfigProfile(prisma: PrismaClient) {
 
     await syncInbounds(prisma);
 
-    const existingInternalSquad = await prisma.internalSquads.findFirst();
-
-    // workaround for created squad from migration
-    if (existingInternalSquad && existingInternalSquad.name === 'Default-Squad') {
-        const configProfileInbounds = await prisma.configProfileInbounds.findMany({
-            where: {
-                profileUuid: config.uuid,
-            },
-        });
-
-        if (configProfileInbounds.length === 0) {
-            consola.info('No config profile inbounds found');
-            return;
-        }
-
-        const internalSquadInbounds = await prisma.internalSquadInbounds.createMany({
-            data: configProfileInbounds.map((inbound) => ({
-                inboundUuid: inbound.uuid,
-                internalSquadUuid: existingInternalSquad.uuid,
-            })),
-        });
-
-        if (!internalSquadInbounds) {
-            consola.error('Failed to create default internal squad inbounds');
-            process.exit(1);
-        }
-
-        return;
-    }
-
     consola.success('Default config profile seeded');
 }

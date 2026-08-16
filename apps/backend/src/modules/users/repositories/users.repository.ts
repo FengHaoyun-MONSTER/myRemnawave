@@ -730,9 +730,14 @@ export class UsersRepository {
     }
 
     public async *getUsersForConfigStream(
+        nodeUuid: string,
         activeInbounds: ConfigProfileInboundEntity[],
     ): AsyncGenerator<UserForConfigEntity[]> {
         const BATCH_SIZE = 100_000;
+        const inboundTags = activeInbounds.map((inbound) => inbound.tag);
+        const inboundTagsExpression = sql<string[]>`ARRAY[${sql.join(
+            inboundTags.map((tag) => sql`${tag}`),
+        )}]::text[]`;
         let lastTId: bigint | null = null;
         let hasMoreData = true;
 
@@ -742,32 +747,14 @@ export class UsersRepository {
                 .where('users.status', '=', USERS_STATUS.ACTIVE)
                 .innerJoin('internalSquadMembers', 'internalSquadMembers.userId', 'users.id')
                 .innerJoin(
-                    'internalSquadInbounds',
-                    'internalSquadInbounds.internalSquadUuid',
+                    'internalSquadNodes',
+                    'internalSquadNodes.internalSquadUuid',
                     'internalSquadMembers.internalSquadUuid',
                 )
-                .innerJoin(
-                    'configProfileInbounds',
-                    'configProfileInbounds.uuid',
-                    'internalSquadInbounds.inboundUuid',
-                )
                 .$if(lastTId !== null, (qb) => qb.where('users.id', '>', lastTId!))
-                .where(
-                    'internalSquadInbounds.inboundUuid',
-                    'in',
-                    activeInbounds.map((inbound) => getKyselyUuid(inbound.uuid)),
-                )
-                .select((eb) => [
-                    'users.id',
-                    'users.trojanPassword',
-                    'users.vlessUuid',
-                    'users.ssPassword',
-                    sql<
-                        string[]
-                    >`coalesce(json_agg(DISTINCT ${eb.ref('configProfileInbounds.tag')}), '[]')`.as(
-                        'tags',
-                    ),
-                ])
+                .where('internalSquadNodes.nodeUuid', '=', getKyselyUuid(nodeUuid))
+                .select(['users.id', 'users.trojanPassword', 'users.vlessUuid', 'users.ssPassword'])
+                .select(inboundTagsExpression.as('tags'))
                 .groupBy(['users.id'])
                 .orderBy('users.id', 'asc')
                 .limit(BATCH_SIZE);
@@ -1240,15 +1227,8 @@ export class UsersRepository {
     public async getUserAccessibleNodes(userId: bigint): Promise<IGetUserAccessibleNodesResponse> {
         const flatResults = await this.qb.kysely
             .selectFrom('nodes as n')
-            .innerJoin('configProfiles as cp', 'n.activeConfigProfileUuid', 'cp.uuid')
-            .innerJoin('configProfileInbounds as cpi', 'cpi.profileUuid', 'cp.uuid')
-            .innerJoin('configProfileInboundsToNodes as cpin', (join) =>
-                join
-                    .onRef('cpin.configProfileInboundUuid', '=', 'cpi.uuid')
-                    .onRef('cpin.nodeUuid', '=', 'n.uuid'),
-            )
-            .innerJoin('internalSquadInbounds as isi', 'isi.inboundUuid', 'cpi.uuid')
-            .innerJoin('internalSquads as sq', 'sq.uuid', 'isi.internalSquadUuid')
+            .innerJoin('internalSquadNodes as isn', 'isn.nodeUuid', 'n.uuid')
+            .innerJoin('internalSquads as sq', 'sq.uuid', 'isn.internalSquadUuid')
             .innerJoin('internalSquadMembers as ism', (join) =>
                 join.onRef('ism.internalSquadUuid', '=', 'sq.uuid').on('ism.userId', '=', userId),
             )
@@ -1256,11 +1236,11 @@ export class UsersRepository {
                 'n.uuid as nodeUuid',
                 'n.name as nodeName',
                 'n.countryCode',
-                'cp.uuid as configProfileUuid',
-                'cp.name as configProfileName',
+                'n.protocolKey',
+                'n.lifecycleState',
+                'n.isPublished',
                 'sq.uuid as squadUuid',
                 'sq.name as squadName',
-                'cpi.tag as inboundTag',
             ])
             .orderBy('n.viewPosition', 'asc')
             .execute();
@@ -1273,8 +1253,9 @@ export class UsersRepository {
                     uuid: row.nodeUuid,
                     nodeName: row.nodeName,
                     countryCode: row.countryCode,
-                    configProfileUuid: row.configProfileUuid,
-                    configProfileName: row.configProfileName,
+                    protocolKey: row.protocolKey,
+                    lifecycleState: row.lifecycleState,
+                    isPublished: row.isPublished,
                     activeSquads: new Map(),
                 });
             }
@@ -1284,15 +1265,9 @@ export class UsersRepository {
             if (node) {
                 if (!node.activeSquads.has(row.squadUuid)) {
                     node.activeSquads.set(row.squadUuid, {
+                        squadUuid: row.squadUuid,
                         squadName: row.squadName,
-                        activeInbounds: [],
                     });
-                }
-
-                const squad = node.activeSquads.get(row.squadUuid);
-
-                if (squad) {
-                    squad.activeInbounds.push(row.inboundTag);
                 }
             }
         });
@@ -1305,6 +1280,22 @@ export class UsersRepository {
         };
 
         return result;
+    }
+
+    public async getGrantedNodeUuids(userIds: bigint[]): Promise<string[]> {
+        if (userIds.length === 0) return [];
+        const result = await this.qb.kysely
+            .selectFrom('internalSquadMembers as members')
+            .innerJoin(
+                'internalSquadNodes as grants',
+                'grants.internalSquadUuid',
+                'members.internalSquadUuid',
+            )
+            .select('grants.nodeUuid')
+            .distinct()
+            .where('members.userId', 'in', userIds)
+            .execute();
+        return result.map((row) => row.nodeUuid);
     }
 
     private includeActiveInternalSquads(eb: ExpressionBuilder<DB, 'users'>) {

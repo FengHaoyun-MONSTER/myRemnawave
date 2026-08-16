@@ -4,8 +4,8 @@ export interface IGetSquadAccessibleNodes {
         uuid: string;
         nodeName: string;
         countryCode: string;
-        configProfileUuid: string;
-        configProfileName: string;
-        activeInbounds: string[];
+        protocolKey: string | null;
+        lifecycleState: string;
+        isPublished: boolean;
     }[];
 }

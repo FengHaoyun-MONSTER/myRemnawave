@@ -156,24 +156,22 @@ export class StartAllNodesByProfileQueueProcessor extends WorkerHost {
 
             const startTime = Date.now();
 
-            const config = await this.queryBus.execute(
-                new GetPreparedConfigWithUsersQuery(
-                    payload.profileUuid,
-                    Array.from(activeInboundsOnNodes.values()),
-                ),
-            );
-
-            this.logger.log(`Generated config for nodes by Profile in ${Date.now() - startTime}ms`);
-
             const mapper = async (node: NodesEntity) => {
-                if (!config.isOk) {
-                    throw new Error('Failed to get config');
-                }
-
                 const activeNodeInboundsTags = new Set(activeNodeTags.get(node.uuid));
 
                 if (!activeNodeInboundsTags) {
                     throw new Error('Failed to get active node inbounds tags');
+                }
+
+                const config = await this.queryBus.execute(
+                    new GetPreparedConfigWithUsersQuery(
+                        node.uuid,
+                        payload.profileUuid,
+                        node.activeInbounds,
+                    ),
+                );
+                if (!config.isOk) {
+                    throw new Error(`Failed to generate node-specific config for ${node.uuid}`);
                 }
 
                 let pluginsSupported = true;
@@ -360,7 +358,8 @@ export class StartAllNodesByProfileQueueProcessor extends WorkerHost {
                 }
             };
 
-            await pMap(nodes, mapper, { concurrency: this.CONCURRENCY });
+            const nodesWithActiveInbounds = nodes.filter((node) => activeNodeTags.has(node.uuid));
+            await pMap(nodesWithActiveInbounds, mapper, { concurrency: this.CONCURRENCY });
 
             this.logger.log(
                 `Started all nodes with profile ${payload.profileUuid} in ${Date.now() - startTime}ms`,

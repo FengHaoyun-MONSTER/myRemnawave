@@ -6,7 +6,7 @@ import { CommandBus, QueryBus } from '@nestjs/cqrs';
 
 import { ExternalSquadBulkActionsCommand } from '@modules/external-squads/commands/external-squad-bulk-actions';
 import { InternalSquadBulkActionsCommand } from '@modules/internal-squads/commands/internal-squad-bulk-actions';
-import { GetAffectedConfigProfilesBySquadUuidQuery } from '@modules/internal-squads/queries/get-affected-config-profiles-by-squad-uuid';
+import { GetNodeUuidsBySquadUuidQuery } from '@modules/internal-squads/queries/get-node-uuids-by-squad-uuid';
 
 import { NodesQueuesService } from '@queue/_nodes';
 
@@ -84,7 +84,7 @@ export class SquadsQueueProcessor extends WorkerHost {
                 new InternalSquadBulkActionsCommand(internalSquadUuid, 'add'),
             );
 
-            await this.restartNodesByConfigProfiles(internalSquadUuid);
+            await this.restartSquadNodes(internalSquadUuid);
 
             return result;
         } catch (error) {
@@ -102,7 +102,7 @@ export class SquadsQueueProcessor extends WorkerHost {
                 new InternalSquadBulkActionsCommand(internalSquadUuid, 'remove'),
             );
 
-            await this.restartNodesByConfigProfiles(internalSquadUuid);
+            await this.restartSquadNodes(internalSquadUuid);
 
             return result;
         } catch (error) {
@@ -112,32 +112,25 @@ export class SquadsQueueProcessor extends WorkerHost {
         }
     }
 
-    private async restartNodesByConfigProfiles(internalSquadUuid: string): Promise<boolean> {
+    private async restartSquadNodes(internalSquadUuid: string): Promise<boolean> {
         try {
-            const configProfiles = await this.queryBus.execute(
-                new GetAffectedConfigProfilesBySquadUuidQuery(internalSquadUuid),
+            const nodes = await this.queryBus.execute(
+                new GetNodeUuidsBySquadUuidQuery(internalSquadUuid),
             );
 
-            if (!configProfiles.isOk) {
+            if (!nodes.isOk) {
                 return false;
             }
 
-            const configProfilesUuids = configProfiles.response;
-
-            if (configProfilesUuids.length === 0) {
+            if (nodes.response.length === 0) {
                 return false;
             }
 
-            this.logger.log(
-                `Restarting nodes by config profiles: ${JSON.stringify(configProfilesUuids)}`,
+            await Promise.all(
+                nodes.response.map((nodeUuid) =>
+                    this.nodesQueuesService.startNode({ nodeUuid, force: true }),
+                ),
             );
-
-            for (const configProfileUuid of configProfilesUuids) {
-                await this.nodesQueuesService.startAllNodesByProfile({
-                    profileUuid: configProfileUuid,
-                    emitter: 'internal-squad-actions',
-                });
-            }
 
             return true;
         } catch (error) {

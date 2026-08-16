@@ -6,10 +6,8 @@ export const InfraProviderSchema = z.object({
     faviconLink: z.nullable(z.string()),
     loginUrl: z.nullable(z.string()),
 
-    createdAt: z.iso.datetime()
-        .transform((str) => new Date(str)),
-    updatedAt: z.iso.datetime()
-        .transform((str) => new Date(str)),
+    createdAt: z.iso.datetime().transform((str) => new Date(str)),
+    updatedAt: z.iso.datetime().transform((str) => new Date(str)),
 
     billingHistory: z.object({
         totalAmount: z.number(),
@@ -34,8 +32,6 @@ export const PartialInfraProviderSchema = z.object({
     faviconLink: z.nullable(z.string()),
     loginUrl: z.nullable(z.string()),
 
-    createdAt: z.iso.datetime()
-        .transform((str) => new Date(str)),
-    updatedAt: z.iso.datetime()
-        .transform((str) => new Date(str)),
+    createdAt: z.iso.datetime().transform((str) => new Date(str)),
+    updatedAt: z.iso.datetime().transform((str) => new Date(str)),
 });

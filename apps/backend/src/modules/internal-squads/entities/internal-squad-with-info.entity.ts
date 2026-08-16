@@ -1,16 +1,20 @@
 import { InternalSquads } from '@prisma/client';
 
-import { ConfigProfileInboundEntity } from '@modules/config-profiles/entities';
-
 export class InternalSquadWithInfoEntity implements InternalSquads {
     public uuid: string;
     public viewPosition: number;
     public name: string;
 
     public membersCount: number | string | bigint | null;
-    public inboundsCount: number | string | bigint | null;
-
-    public inbounds: ConfigProfileInboundEntity[];
+    public nodesCount: number | string | bigint | null;
+    public nodes: {
+        uuid: string;
+        name: string;
+        countryCode: string;
+        protocolKey: string | null;
+        lifecycleState: string;
+        isPublished: boolean;
+    }[];
 
     public createdAt: Date;
     public updatedAt: Date;
@@ -19,7 +23,7 @@ export class InternalSquadWithInfoEntity implements InternalSquads {
         Object.assign(this, internalSquad);
 
         this.membersCount = Number(this.membersCount) || 0;
-        this.inboundsCount = Number(this.inboundsCount) || 0;
+        this.nodesCount = Number(this.nodesCount) || 0;
 
         return this;
     }

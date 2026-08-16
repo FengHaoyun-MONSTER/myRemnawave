@@ -18,11 +18,7 @@ export namespace GetAllInboundsCommand {
     export const ResponseSchema = z.object({
         response: z.object({
             total: z.number(),
-            inbounds: z.array(
-                ConfigProfileInboundsSchema.extend({
-                    activeSquads: z.array(z.uuid()),
-                }),
-            ),
+            inbounds: z.array(ConfigProfileInboundsSchema),
         }),
     });
 

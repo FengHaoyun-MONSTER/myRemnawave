@@ -14,6 +14,13 @@ export class NodeResponseModel {
     public address: string;
     public port: null | number;
     public proxyUrl: string | null;
+    public machineUuid: string | null;
+    public endpointUuid: string;
+    public protocolKey: string | null;
+    public lifecycleState: string;
+    public isPublished: boolean;
+    public externalPort: number | null;
+    public externalNetwork: 'tcp' | 'udp' | null;
     public isConnected: boolean;
     public isConnecting: boolean;
     public isDisabled: boolean;
@@ -54,6 +61,13 @@ export class NodeResponseModel {
         this.address = data.address;
         this.port = data.port;
         this.proxyUrl = data.proxyUrl;
+        this.machineUuid = data.machineUuid;
+        this.endpointUuid = data.endpointUuid;
+        this.protocolKey = data.protocolKey;
+        this.lifecycleState = data.lifecycleState;
+        this.isPublished = data.isPublished;
+        this.externalPort = data.externalPort;
+        this.externalNetwork = data.externalNetwork;
         this.isConnected = data.isConnected;
         this.isConnecting = data.isConnecting;
         this.isDisabled = data.isDisabled;

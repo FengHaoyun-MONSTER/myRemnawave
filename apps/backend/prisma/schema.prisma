@@ -165,9 +165,17 @@ model Nodes {
   id       BigInt  @unique @default(autoincrement()) @map("id")
   uuid     String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name     String  @unique @map("name")
-  address  String  @unique @map("address")
+  address  String  @map("address")
   port     Int?    @map("port")
   proxyUrl String? @map("proxy_url")
+
+  machineUuid     String? @map("machine_uuid") @db.Uuid
+  endpointUuid    String  @unique @default(dbgenerated("gen_random_uuid()")) @map("endpoint_uuid") @db.Uuid
+  protocolKey     String? @map("protocol_key") @db.VarChar(32)
+  lifecycleState  String  @default("DRAFT") @map("lifecycle_state") @db.VarChar(32)
+  isPublished     Boolean @default(false) @map("is_published")
+  externalPort    Int?    @map("external_port")
+  externalNetwork String? @map("external_network") @db.VarChar(3)
 
   activeConfigProfileUuid String? @map("active_config_profile_uuid") @db.Uuid
   activePluginUuid        String? @map("active_plugin_uuid") @db.Uuid
@@ -183,13 +191,13 @@ model Nodes {
   consumptionMultiplier     BigInt @default(1000000000) @map("consumption_multiplier")
   nodeConsumptionMultiplier BigInt @default(1000000000) @map("node_consumption_multiplier")
 
-  isTrafficTrackingActive Boolean  @default(false) @map("is_traffic_tracking_active")
-  trafficResetDay         Int?     @default(1) @map("traffic_reset_day")
-  trafficLimitBytes       BigInt?  @default(0) @map("traffic_limit_bytes")
-  trafficUsedBytes        BigInt?  @default(0) @map("traffic_used_bytes")
-  notifyPercent           Int?     @default(0) @map("notify_percent")
+  isTrafficTrackingActive Boolean @default(false) @map("is_traffic_tracking_active")
+  trafficResetDay         Int?    @default(1) @map("traffic_reset_day")
+  trafficLimitBytes       BigInt? @default(0) @map("traffic_limit_bytes")
+  trafficUsedBytes        BigInt? @default(0) @map("traffic_used_bytes")
+  notifyPercent           Int?    @default(0) @map("notify_percent")
   /// [NodeIps]
-  ips                     Json     @default("[]") @map("ips")
+  ips                     Json    @default("[]") @map("ips")
 
   providerUuid String? @map("provider_uuid") @db.Uuid
 
@@ -208,13 +216,78 @@ model Nodes {
   connectedUsers               UserTraffic[]
   nodeMetas                    NodeMeta[]
   torrentBlockerReports        TorrentBlockerReports[]
+  internalSquadNodes           InternalSquadNodes[]
 
   activeConfigProfile ConfigProfiles? @relation(fields: [activeConfigProfileUuid], references: [uuid], onDelete: SetNull)
+  machine             Machines?       @relation(fields: [machineUuid], references: [uuid], onDelete: Cascade)
   provider            InfraProviders? @relation(fields: [providerUuid], references: [uuid], onDelete: SetNull)
   activePlugin        NodePlugin?     @relation(fields: [activePluginUuid], references: [uuid], onDelete: SetNull)
 
+  @@unique([machineUuid, protocolKey])
   @@index([id])
+  @@index([machineUuid])
   @@map("nodes")
+}
+
+model Machines {
+  uuid        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique @map("name") @db.VarChar(100)
+  address     String   @unique @map("address") @db.VarChar(255)
+  status      String   @default("DRAFT") @map("status") @db.VarChar(32)
+  countryCode String   @default("XX") @map("country_code") @db.VarChar(2)
+  tags        String[] @default([]) @map("tags")
+  note        String?  @map("note") @db.VarChar(255)
+
+  agentVersion      String?   @map("agent_version") @db.VarChar(64)
+  agentCapabilities String[]  @default([]) @map("agent_capabilities")
+  agentConnectedAt  DateTime? @map("agent_connected_at")
+  agentLastSeenAt   DateTime? @map("agent_last_seen_at")
+  systemInfo        Json?     @map("system_info")
+
+  enrollmentTokenHash String?   @unique @map("enrollment_token_hash") @db.VarChar(128)
+  enrollmentExpiresAt DateTime? @map("enrollment_expires_at")
+  enrollmentUsedAt    DateTime? @map("enrollment_used_at")
+
+  clientCertSerial      String?   @unique @map("client_cert_serial") @db.VarChar(128)
+  clientCertFingerprint String?   @unique @map("client_cert_fingerprint") @db.VarChar(128)
+  clientCertExpiresAt   DateTime? @map("client_cert_expires_at")
+
+  warpStatus      String    @default("DISABLED") @map("warp_status") @db.VarChar(32)
+  warpProxyPort   Int?      @map("warp_proxy_port")
+  warpLastChecked DateTime? @map("warp_last_checked")
+
+  archivedAt DateTime? @map("archived_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  nodes    Nodes[]
+  commands MachineCommands[]
+
+  @@index([status])
+  @@index([agentLastSeenAt])
+  @@map("machines")
+}
+
+model MachineCommands {
+  uuid           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  machineUuid    String    @map("machine_uuid") @db.Uuid
+  kind           String    @map("kind") @db.VarChar(64)
+  idempotencyKey String    @unique @map("idempotency_key") @db.VarChar(128)
+  status         String    @default("QUEUED") @map("status") @db.VarChar(32)
+  payload        Json      @map("payload")
+  result         Json?     @map("result")
+  errorCode      String?   @map("error_code") @db.VarChar(64)
+  deadlineAt     DateTime  @map("deadline_at")
+  startedAt      DateTime? @map("started_at")
+  completedAt    DateTime? @map("completed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  machine Machines @relation(fields: [machineUuid], references: [uuid], onDelete: Cascade)
+
+  @@index([machineUuid, status])
+  @@index([deadlineAt])
+  @@map("machine_commands")
 }
 
 model NodesUserUsageHistory {
@@ -370,9 +443,22 @@ model InternalSquads {
 
   internalSquadMembers  InternalSquadMembers[]
   internalSquadInbounds InternalSquadInbounds[]
+  internalSquadNodes    InternalSquadNodes[]
   excludedHosts         InternalSquadHostExclusions[]
 
   @@map("internal_squads")
+}
+
+model InternalSquadNodes {
+  internalSquadUuid String @map("internal_squad_uuid") @db.Uuid
+  nodeUuid          String @map("node_uuid") @db.Uuid
+
+  internalSquad InternalSquads @relation(fields: [internalSquadUuid], references: [uuid], onDelete: Cascade)
+  node          Nodes          @relation(fields: [nodeUuid], references: [uuid], onDelete: Cascade)
+
+  @@id([internalSquadUuid, nodeUuid])
+  @@index([nodeUuid])
+  @@map("internal_squad_nodes")
 }
 
 model InternalSquadMembers {
@@ -433,7 +519,7 @@ model ConfigProfileInbounds {
   configProfileInboundsToNodes ConfigProfileInboundsToNodes[]
   internalSquadInbounds        InternalSquadInbounds[]
 
-  @@unique([tag])
+  @@unique([profileUuid, tag])
   @@index([profileUuid, uuid])
   @@map("config_profile_inbounds")
 }

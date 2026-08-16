@@ -6,11 +6,12 @@ export class GetUserAccessibleNodesResponseModel {
         uuid: string;
         nodeName: string;
         countryCode: string;
-        configProfileUuid: string;
-        configProfileName: string;
+        protocolKey: string | null;
+        lifecycleState: string;
+        isPublished: boolean;
         activeSquads: {
+            squadUuid: string;
             squadName: string;
-            activeInbounds: string[];
         }[];
     }[];
 

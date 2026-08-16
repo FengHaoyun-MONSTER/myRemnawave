@@ -1,10 +1,10 @@
-import { ConfigProfileInboundWithSquadsEntity } from '../entities';
+import { ConfigProfileInboundEntity } from '../entities';
 
 export class GetAllInboundsResponseModel {
     public readonly total: number;
-    public readonly inbounds: ConfigProfileInboundWithSquadsEntity[];
+    public readonly inbounds: ConfigProfileInboundEntity[];
 
-    constructor(inbounds: ConfigProfileInboundWithSquadsEntity[], total: number) {
+    constructor(inbounds: ConfigProfileInboundEntity[], total: number) {
         this.total = total;
         this.inbounds = inbounds;
     }

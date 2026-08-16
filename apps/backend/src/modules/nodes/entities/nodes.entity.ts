@@ -14,6 +14,13 @@ export class NodesEntity implements Nodes {
     public address: string;
     public port: null | number;
     public proxyUrl: string | null;
+    public machineUuid: string | null;
+    public endpointUuid: string;
+    public protocolKey: string | null;
+    public lifecycleState: string;
+    public isPublished: boolean;
+    public externalPort: number | null;
+    public externalNetwork: 'tcp' | 'udp' | null;
     public isConnected: boolean;
     public isConnecting: boolean;
     public isDisabled: boolean;

@@ -191,6 +191,7 @@ export class StartNodeProcessor extends WorkerHost {
             const startTime = getTime();
             const config = await this.queryBus.execute(
                 new GetPreparedConfigWithUsersQuery(
+                    node.uuid,
                     node.activeConfigProfileUuid,
                     node.activeInbounds,
                 ),

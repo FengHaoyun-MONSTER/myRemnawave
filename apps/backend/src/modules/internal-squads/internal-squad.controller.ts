@@ -104,7 +104,7 @@ export class InternalSquadController {
     ): Promise<CreateInternalSquadResponseDto> {
         const result = await this.internalSquadService.createInternalSquad(
             createInternalSquadDto.name,
-            createInternalSquadDto.inbounds,
+            createInternalSquadDto.nodes,
         );
 
         const data = errorHandler(result);
@@ -160,7 +160,7 @@ export class InternalSquadController {
         const result = await this.internalSquadService.updateInternalSquad(
             body.uuid,
             body.name,
-            body.inbounds,
+            body.nodes,
         );
 
         const data = errorHandler(result);

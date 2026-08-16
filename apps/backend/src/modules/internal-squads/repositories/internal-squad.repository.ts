@@ -1,7 +1,7 @@
 import { TransactionHost } from '@nestjs-cls/transactional';
 import { TransactionalAdapterPrisma } from '@nestjs-cls/transactional-adapter-prisma';
+import { Prisma } from '@prisma/client';
 import { sql } from 'kysely';
-import { jsonArrayFrom } from 'kysely/helpers/postgres';
 
 import { Injectable } from '@nestjs/common';
 
@@ -14,6 +14,48 @@ import { InternalSquadWithInfoEntity } from '../entities';
 import { InternalSquadEntity } from '../entities/internal-squad.entity';
 import { IGetSquadAccessibleNodes } from '../interfaces/get-squad-accessible-nodes.interface';
 import { InternalSquadConverter } from '../internal-squad.converter';
+
+const squadNodesInclude = {
+    _count: {
+        select: {
+            internalSquadMembers: true,
+            internalSquadNodes: true,
+        },
+    },
+    internalSquadNodes: {
+        select: {
+            node: {
+                select: {
+                    uuid: true,
+                    name: true,
+                    countryCode: true,
+                    protocolKey: true,
+                    lifecycleState: true,
+                    isPublished: true,
+                    viewPosition: true,
+                },
+            },
+        },
+    },
+} satisfies Prisma.InternalSquadsInclude;
+
+type SquadWithNodes = Prisma.InternalSquadsGetPayload<{ include: typeof squadNodesInclude }>;
+
+function mapSquadWithNodes(squad: SquadWithNodes): InternalSquadWithInfoEntity {
+    return new InternalSquadWithInfoEntity({
+        uuid: squad.uuid,
+        viewPosition: squad.viewPosition,
+        name: squad.name,
+        createdAt: squad.createdAt,
+        updatedAt: squad.updatedAt,
+        membersCount: squad._count.internalSquadMembers,
+        nodesCount: squad._count.internalSquadNodes,
+        nodes: squad.internalSquadNodes
+            .map(({ node }) => node)
+            .sort((left, right) => left.viewPosition - right.viewPosition)
+            .map(({ viewPosition: _viewPosition, ...node }) => node),
+    });
+}
 
 @Injectable()
 export class InternalSquadRepository implements ICrud<InternalSquadEntity> {
@@ -41,6 +83,19 @@ export class InternalSquadRepository implements ICrud<InternalSquadEntity> {
                 name,
                 internalSquadInbounds: {
                     create: inbounds.map((inbound) => ({ inboundUuid: inbound })),
+                },
+            },
+        });
+
+        return this.internalSquadConverter.fromPrismaModelToEntity(result);
+    }
+
+    public async createWithNodes(name: string, nodes: string[]): Promise<InternalSquadEntity> {
+        const result = await this.prisma.tx.internalSquads.create({
+            data: {
+                name,
+                internalSquadNodes: {
+                    create: nodes.map((nodeUuid) => ({ nodeUuid })),
                 },
             },
         });
@@ -99,134 +154,26 @@ export class InternalSquadRepository implements ICrud<InternalSquadEntity> {
     }
 
     public async getInternalSquads(): Promise<InternalSquadWithInfoEntity[]> {
-        const result = await this.qb.kysely
-            .selectFrom('internalSquads')
-            .select((eb) => [
-                'internalSquads.uuid',
-                'internalSquads.viewPosition',
-                'internalSquads.name',
-                'internalSquads.createdAt',
-                'internalSquads.updatedAt',
-
-                eb
-                    .selectFrom('internalSquadMembers')
-                    .select(eb.fn.countAll().as('count'))
-                    .whereRef('internalSquadMembers.internalSquadUuid', '=', 'internalSquads.uuid')
-                    .as('membersCount'),
-
-                eb
-                    .selectFrom('internalSquadInbounds')
-                    .select(eb.fn.countAll().as('count'))
-                    .whereRef('internalSquadInbounds.internalSquadUuid', '=', 'internalSquads.uuid')
-                    .as('inboundsCount'),
-
-                jsonArrayFrom(
-                    eb
-                        .selectFrom('configProfileInbounds')
-                        .selectAll()
-                        .where(
-                            'configProfileInbounds.uuid',
-                            'in',
-                            eb
-                                .selectFrom('internalSquadInbounds')
-                                .select('inboundUuid')
-                                .whereRef(
-                                    'internalSquadInbounds.internalSquadUuid',
-                                    '=',
-                                    'internalSquads.uuid',
-                                ),
-                        ),
-                ).as('inbounds'),
-
-                // jsonArrayFrom(
-                //     eb
-                //         .selectFrom('internalSquadInbounds')
-                //         .leftJoin(
-                //             'configProfileInbounds',
-                //             'configProfileInbounds.uuid',
-                //             'internalSquadInbounds.inboundUuid',
-                //         )
-                //         .selectAll('configProfileInbounds')
-                //         .whereRef(
-                //             'internalSquadInbounds.internalSquadUuid',
-                //             '=',
-                //             'internalSquads.uuid',
-                //         ),
-                // ).as('inbounds'),
-            ])
-
-            .groupBy([
-                'internalSquads.uuid',
-                'internalSquads.viewPosition',
-                'internalSquads.name',
-                'internalSquads.createdAt',
-                'internalSquads.updatedAt',
-            ])
-            .orderBy('internalSquads.viewPosition', 'asc')
-            .execute();
-
-        return result.map((item) => new InternalSquadWithInfoEntity(item));
+        const result = await this.prisma.tx.internalSquads.findMany({
+            orderBy: { viewPosition: 'asc' },
+            include: squadNodesInclude,
+        });
+        return result.map(mapSquadWithNodes);
     }
 
     public async getInternalSquadsByUuid(
         uuid: string,
     ): Promise<InternalSquadWithInfoEntity | null> {
-        const result = await this.qb.kysely
-            .selectFrom('internalSquads')
-            .where('internalSquads.uuid', '=', getKyselyUuid(uuid))
-            .select((eb) => [
-                'internalSquads.uuid',
-                'internalSquads.viewPosition',
-                'internalSquads.name',
-                'internalSquads.createdAt',
-                'internalSquads.updatedAt',
-
-                eb
-                    .selectFrom('internalSquadMembers')
-                    .select(eb.fn.countAll().as('count'))
-                    .whereRef('internalSquadMembers.internalSquadUuid', '=', 'internalSquads.uuid')
-                    .as('membersCount'),
-
-                eb
-                    .selectFrom('internalSquadInbounds')
-                    .select(eb.fn.countAll().as('count'))
-                    .whereRef('internalSquadInbounds.internalSquadUuid', '=', 'internalSquads.uuid')
-                    .as('inboundsCount'),
-
-                jsonArrayFrom(
-                    eb
-                        .selectFrom('configProfileInbounds')
-                        .selectAll()
-                        .where(
-                            'configProfileInbounds.uuid',
-                            'in',
-                            eb
-                                .selectFrom('internalSquadInbounds')
-                                .select('inboundUuid')
-                                .whereRef(
-                                    'internalSquadInbounds.internalSquadUuid',
-                                    '=',
-                                    'internalSquads.uuid',
-                                ),
-                        ),
-                ).as('inbounds'),
-            ])
-
-            .groupBy([
-                'internalSquads.uuid',
-                'internalSquads.viewPosition',
-                'internalSquads.name',
-                'internalSquads.createdAt',
-                'internalSquads.updatedAt',
-            ])
-            .orderBy('internalSquads.viewPosition', 'asc')
-            .executeTakeFirst();
+        const result = await this.prisma.tx.internalSquads.findUnique({
+            where: { uuid },
+            include: squadNodesInclude,
+        });
 
         if (!result) {
             return null;
         }
 
-        return new InternalSquadWithInfoEntity(result);
+        return mapSquadWithNodes(result);
     }
 
     public async createInbounds(
@@ -259,6 +206,40 @@ export class InternalSquadRepository implements ICrud<InternalSquadEntity> {
         return {
             affectedCount: result.count,
         };
+    }
+
+    public async createNodes(
+        nodes: string[],
+        internalSquadUuid: string,
+    ): Promise<{ affectedCount: number }> {
+        const result = await this.prisma.tx.internalSquadNodes.createMany({
+            data: nodes.map((nodeUuid) => ({ nodeUuid, internalSquadUuid })),
+            skipDuplicates: true,
+        });
+        return { affectedCount: result.count };
+    }
+
+    public async cleanNodes(internalSquadUuid: string): Promise<{ affectedCount: number }> {
+        const result = await this.prisma.tx.internalSquadNodes.deleteMany({
+            where: { internalSquadUuid },
+        });
+        return { affectedCount: result.count };
+    }
+
+    public async getNodeUuidsBySquadUuid(internalSquadUuid: string): Promise<string[]> {
+        const result = await this.prisma.tx.internalSquadNodes.findMany({
+            where: { internalSquadUuid },
+            select: { nodeUuid: true },
+        });
+        return result.map((row) => row.nodeUuid);
+    }
+
+    public async areNodeUuidsValid(nodeUuids: string[]): Promise<boolean> {
+        if (nodeUuids.length === 0) return true;
+        const count = await this.prisma.tx.nodes.count({
+            where: { uuid: { in: nodeUuids }, lifecycleState: { not: 'ARCHIVED' } },
+        });
+        return count === nodeUuids.length;
     }
 
     public async addUsersToInternalSquad(internalSquadUuid: string): Promise<{
@@ -330,15 +311,8 @@ export class InternalSquadRepository implements ICrud<InternalSquadEntity> {
     private getSquadNodesQuery(squadUuid: string) {
         return this.qb.kysely
             .selectFrom('nodes as n')
-            .innerJoin('configProfiles as cp', 'n.activeConfigProfileUuid', 'cp.uuid')
-            .innerJoin('configProfileInbounds as cpi', 'cpi.profileUuid', 'cp.uuid')
-            .innerJoin('configProfileInboundsToNodes as cpin', (join) =>
-                join
-                    .onRef('cpin.configProfileInboundUuid', '=', 'cpi.uuid')
-                    .onRef('cpin.nodeUuid', '=', 'n.uuid'),
-            )
-            .innerJoin('internalSquadInbounds as isi', 'isi.inboundUuid', 'cpi.uuid')
-            .where('isi.internalSquadUuid', '=', getKyselyUuid(squadUuid))
+            .innerJoin('internalSquadNodes as isn', 'isn.nodeUuid', 'n.uuid')
+            .where('isn.internalSquadUuid', '=', getKyselyUuid(squadUuid))
             .select(['n.id', 'n.uuid'])
             .distinct()
             .execute();
@@ -445,74 +419,28 @@ export class InternalSquadRepository implements ICrud<InternalSquadEntity> {
     }
 
     public async getSquadAccessibleNodes(squadUuid: string): Promise<IGetSquadAccessibleNodes> {
-        const flatResults = await this.qb.kysely
+        const nodes = await this.qb.kysely
             .selectFrom('nodes as n')
-            .innerJoin('configProfiles as cp', 'n.activeConfigProfileUuid', 'cp.uuid')
-            .innerJoin('configProfileInbounds as cpi', 'cpi.profileUuid', 'cp.uuid')
-            .innerJoin('configProfileInboundsToNodes as cpin', (join) =>
-                join
-                    .onRef('cpin.configProfileInboundUuid', '=', 'cpi.uuid')
-                    .onRef('cpin.nodeUuid', '=', 'n.uuid'),
-            )
-            .innerJoin('internalSquadInbounds as isi', 'isi.inboundUuid', 'cpi.uuid')
-            .innerJoin('internalSquads as sq', (join) =>
-                join
-                    .onRef('sq.uuid', '=', 'isi.internalSquadUuid')
-                    .on('sq.uuid', '=', getKyselyUuid(squadUuid)),
-            )
+            .innerJoin('internalSquadNodes as isn', 'isn.nodeUuid', 'n.uuid')
+            .where('isn.internalSquadUuid', '=', getKyselyUuid(squadUuid))
             .select([
                 'n.uuid as nodeUuid',
                 'n.name as nodeName',
                 'n.countryCode',
                 'n.viewPosition',
-                'cp.uuid as configProfileUuid',
-                'cp.name as configProfileName',
-                'cpi.tag as inboundTag',
+                'n.protocolKey',
+                'n.lifecycleState',
+                'n.isPublished',
             ])
+            .orderBy('n.viewPosition', 'asc')
             .execute();
-
-        const nodesMap = new Map<
-            string,
-            {
-                uuid: string;
-                nodeName: string;
-                countryCode: string;
-                viewPosition: number;
-                configProfileUuid: string;
-                configProfileName: string;
-                activeInbounds: Set<string>;
-            }
-        >();
-
-        flatResults.forEach((row) => {
-            if (!nodesMap.has(row.nodeUuid)) {
-                nodesMap.set(row.nodeUuid, {
-                    uuid: row.nodeUuid,
-                    nodeName: row.nodeName,
-                    countryCode: row.countryCode,
-                    viewPosition: row.viewPosition,
-                    configProfileUuid: row.configProfileUuid,
-                    configProfileName: row.configProfileName,
-                    activeInbounds: new Set(),
-                });
-            }
-
-            const node = nodesMap.get(row.nodeUuid)!;
-            node.activeInbounds.add(row.inboundTag);
-        });
 
         const result: IGetSquadAccessibleNodes = {
             squadUuid,
-            accessibleNodes: Array.from(nodesMap.values())
-                .sort((a, b) => a.viewPosition - b.viewPosition)
-                .map((node) => ({
-                    uuid: node.uuid,
-                    nodeName: node.nodeName,
-                    countryCode: node.countryCode,
-                    configProfileUuid: node.configProfileUuid,
-                    configProfileName: node.configProfileName,
-                    activeInbounds: Array.from(node.activeInbounds),
-                })),
+            accessibleNodes: nodes.map(({ nodeUuid, viewPosition: _viewPosition, ...node }) => ({
+                uuid: nodeUuid,
+                ...node,
+            })),
         };
 
         return result;

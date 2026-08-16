@@ -175,17 +175,18 @@ export class HostsRepository implements ICrud<HostsEntity> {
             .where((eb) =>
                 eb.exists(
                     eb
-                        .selectFrom('internalSquadInbounds')
+                        .selectFrom('internalSquadNodes')
                         .innerJoin(
                             'internalSquadMembers',
                             'internalSquadMembers.internalSquadUuid',
-                            'internalSquadInbounds.internalSquadUuid',
+                            'internalSquadNodes.internalSquadUuid',
                         )
-                        .whereRef(
-                            'internalSquadInbounds.inboundUuid',
-                            '=',
-                            'hosts.configProfileInboundUuid',
+                        .innerJoin(
+                            'hostsToNodes',
+                            'hostsToNodes.nodeUuid',
+                            'internalSquadNodes.nodeUuid',
                         )
+                        .whereRef('hostsToNodes.hostUuid', '=', 'hosts.uuid')
                         .where('internalSquadMembers.userId', '=', userId)
                         .where((eb2) =>
                             eb2.not(
@@ -200,7 +201,7 @@ export class HostsRepository implements ICrud<HostsEntity> {
                                         .whereRef(
                                             'internalSquadHostExclusions.squadUuid',
                                             '=',
-                                            'internalSquadInbounds.internalSquadUuid',
+                                            'internalSquadNodes.internalSquadUuid',
                                         )
                                         .select(eb2.val(1).as('one')),
                                 ),

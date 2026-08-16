@@ -12,7 +12,6 @@ import { getKyselyUuid } from '@common/helpers';
 import { values } from '@common/helpers/kysely/values';
 
 import { ConfigProfileConverter } from '../converters/config-profile.converter';
-import { ConfigProfileInboundWithSquadsEntity } from '../entities';
 import { ConfigProfileInboundEntity } from '../entities/config-profile-inbound.entity';
 import { ConfigProfileWithInboundsAndNodesEntity } from '../entities/config-profile-with-inbounds-and-nodes.entity';
 import { ConfigProfileEntity } from '../entities/config-profile.entity';
@@ -220,49 +219,9 @@ export class ConfigProfileRepository {
         return result.map((item) => new ConfigProfileInboundEntity(item));
     }
 
-    public async getInboundsWithSquadsByProfileUuid(
-        profileUuid: string,
-    ): Promise<ConfigProfileInboundWithSquadsEntity[]> {
-        const result = await this.qb.kysely
-            .selectFrom('configProfileInbounds')
-            .where('configProfileInbounds.profileUuid', '=', getKyselyUuid(profileUuid))
-            .selectAll('configProfileInbounds')
-            .select((eb) => [
-                jsonArrayFrom(
-                    eb
-                        .selectFrom('internalSquadInbounds')
-                        .select(['internalSquadInbounds.internalSquadUuid as uuid'])
-                        .whereRef(
-                            'internalSquadInbounds.inboundUuid',
-                            '=',
-                            'configProfileInbounds.uuid',
-                        ),
-                ).as('activeSquads'),
-            ])
-            .execute();
-
-        return result.map((item) => new ConfigProfileInboundWithSquadsEntity(item));
-    }
-
-    public async getAllInbounds(): Promise<ConfigProfileInboundWithSquadsEntity[]> {
-        const result = await this.qb.kysely
-            .selectFrom('configProfileInbounds')
-            .selectAll('configProfileInbounds')
-            .select((eb) => [
-                jsonArrayFrom(
-                    eb
-                        .selectFrom('internalSquadInbounds')
-                        .select(['internalSquadInbounds.internalSquadUuid as uuid'])
-                        .whereRef(
-                            'internalSquadInbounds.inboundUuid',
-                            '=',
-                            'configProfileInbounds.uuid',
-                        ),
-                ).as('activeSquads'),
-            ])
-            .execute();
-
-        return result.map((item) => new ConfigProfileInboundWithSquadsEntity(item));
+    public async getAllInbounds(): Promise<ConfigProfileInboundEntity[]> {
+        const result = await this.prisma.tx.configProfileInbounds.findMany();
+        return result.map((item) => new ConfigProfileInboundEntity(item));
     }
 
     public async reorderMany(

@@ -14,6 +14,7 @@ import { HwidUserDevicesModule } from './hwid-user-devices/hwid-user-devices.mod
 import { InfraBillingModule } from './infra-billing/infra-billing.module';
 import { InternalSquadModule } from './internal-squads/internal-squad.module';
 import { KeygenModule } from './keygen/keygen.module';
+import { MachinesModule } from './machines/machines.module';
 import { MetadataModule } from './metadata/metadata.module';
 import { NodePluginModule } from './node-plugins';
 import { NodesUsageHistoryModule } from './nodes-usage-history/nodes-usage-history.module';
@@ -44,6 +45,7 @@ import { UsersModule } from './users/users.module';
         InternalSquadModule,
         ExternalSquadModule,
         KeygenModule,
+        ConditionalModule.registerWhen(MachinesModule, () => isRestApi()),
         NodesModule,
         NodePluginModule,
         HostsModule,

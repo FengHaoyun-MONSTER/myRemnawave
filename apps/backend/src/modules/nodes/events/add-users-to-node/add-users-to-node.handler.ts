@@ -1,139 +1,34 @@
 import { Logger } from '@nestjs/common';
-import { IEventHandler, QueryBus } from '@nestjs/cqrs';
-import { EventsHandler } from '@nestjs/cqrs';
+import { EventsHandler, IEventHandler, QueryBus } from '@nestjs/cqrs';
 
-import { AddUsersCommand as AddUsersToNodeCommandSdk } from '@remnawave/node-contract';
-
-import { isSS2022Method } from '@common/helpers/xray-config/ss-cipher';
-import { getVlessFlowFromDbInbound } from '@common/utils/flow/get-vless-flow';
-
-import { ConfigProfileInboundEntity } from '@modules/config-profiles/entities';
-import { GetUsersWithResolvedInboundsQuery } from '@modules/users/queries/get-users-with-resolved-inbounds';
+import { GetGrantedNodeUuidsQuery } from '@modules/users/queries/get-granted-node-uuids';
 
 import { NodesQueuesService } from '@queue/_nodes';
 
-import { NodesRepository } from '../../repositories/nodes.repository';
 import { AddUsersToNodeEvent } from './add-users-to-node.event';
 
 @EventsHandler(AddUsersToNodeEvent)
 export class AddUsersToNodeHandler implements IEventHandler<AddUsersToNodeEvent> {
-    public readonly logger = new Logger(AddUsersToNodeHandler.name);
+    private readonly logger = new Logger(AddUsersToNodeHandler.name);
 
     constructor(
-        private readonly nodesRepository: NodesRepository,
         private readonly nodesQueuesService: NodesQueuesService,
         private readonly queryBus: QueryBus,
     ) {}
 
-    async handle(event: AddUsersToNodeEvent) {
+    async handle(event: AddUsersToNodeEvent): Promise<void> {
         try {
-            const nodes = await this.nodesRepository.findConnectedNodes();
-
-            if (nodes.length === 0) {
-                return;
-            }
-
-            const usersResult = await this.queryBus.execute(
-                new GetUsersWithResolvedInboundsQuery(event.ids),
+            const grantedNodes = await this.queryBus.execute(
+                new GetGrantedNodeUuidsQuery(event.ids),
             );
-
-            if (!usersResult.isOk || usersResult.response.length === 0) {
-                return;
-            }
-
-            const activeNodes = nodes.filter(
-                (node) => node.activeInbounds.length > 0 && node.activeConfigProfileUuid,
+            if (!grantedNodes.isOk) return;
+            await Promise.all(
+                grantedNodes.response.map((nodeUuid) =>
+                    this.nodesQueuesService.startNode({ nodeUuid, force: true }),
+                ),
             );
-
-            if (activeNodes.length === 0) return;
-
-            for (const node of activeNodes) {
-                const activeTags = new Set(node.activeInbounds.map((ib) => ib.tag));
-
-                const usersForNode: AddUsersToNodeCommandSdk.Request['users'] = [];
-                const usersToRemove: Array<{ userId: string; hashUuid: string }> = [];
-
-                for (const user of usersResult.response) {
-                    const { id, trojanPassword, vlessUuid, ssPassword, inbounds } = user;
-
-                    if (inbounds.length === 0) continue;
-
-                    const filteredInbounds = inbounds.filter((ib) => activeTags.has(ib.tag));
-
-                    if (filteredInbounds.length === 0) {
-                        usersToRemove.push({ userId: id.toString(), hashUuid: vlessUuid });
-                        continue;
-                    }
-
-                    usersForNode.push({
-                        userData: {
-                            userId: id.toString(),
-                            hashUuid: vlessUuid,
-                            vlessUuid,
-                            trojanPassword,
-                            ssPassword,
-                        },
-                        inboundData: filteredInbounds.map((inbound) => {
-                            const inboundType = this.resolveInboundType(inbound);
-
-                            switch (inboundType) {
-                                case 'trojan':
-                                    return { type: inboundType, tag: inbound.tag };
-                                case 'vless':
-                                    return {
-                                        type: inboundType,
-                                        tag: inbound.tag,
-                                        flow: getVlessFlowFromDbInbound(inbound),
-                                    };
-                                case 'hysteria':
-                                    return {
-                                        type: inboundType,
-                                        tag: inbound.tag,
-                                    };
-                                case 'shadowsocks':
-                                    return { type: inboundType, tag: inbound.tag };
-                                case 'shadowsocks22':
-                                    return { type: inboundType, tag: inbound.tag };
-                                default:
-                                    throw new Error(`Unsupported inbound type: ${inboundType}`);
-                            }
-                        }),
-                    });
-                }
-
-                if (usersForNode.length > 0) {
-                    const affectedInboundTags = [...activeTags];
-
-                    await this.nodesQueuesService.addUsersToNode({
-                        data: {
-                            affectedInboundTags,
-                            users: usersForNode,
-                        },
-                        node: { address: node.address, port: node.port, proxyUrl: node.proxyUrl },
-                    });
-                }
-
-                if (usersToRemove.length > 0) {
-                    await this.nodesQueuesService.removeUsersFromNode({
-                        data: {
-                            users: usersToRemove.map((u) => ({
-                                userId: u.userId,
-                                hashUuid: u.hashUuid,
-                            })),
-                        },
-                        node: { address: node.address, port: node.port, proxyUrl: node.proxyUrl },
-                    });
-                }
-            }
         } catch (error) {
-            this.logger.error(`Error in Event AddUsersToNodeHandler: ${error}`);
+            this.logger.error(`Failed to reconcile nodes for user changes: ${String(error)}`);
         }
-    }
-
-    private resolveInboundType(inbound: ConfigProfileInboundEntity): string {
-        if (inbound.type === 'shadowsocks' && isSS2022Method(inbound.rawInbound)) {
-            return 'shadowsocks22';
-        }
-        return inbound.type;
     }
 }

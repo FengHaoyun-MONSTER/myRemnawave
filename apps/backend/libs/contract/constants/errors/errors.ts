@@ -739,9 +739,9 @@ export const ERRORS = {
         message: 'Name or config is required',
         httpCode: 400,
     },
-    NAME_OR_INBOUNDS_REQUIRED: {
+    NAME_OR_NODES_REQUIRED: {
         code: 'A153',
-        message: 'Name or inbounds is required',
+        message: 'Name or nodes is required',
         httpCode: 400,
     },
     GET_INTERNAL_SQUAD_ACCESSIBLE_NODES_ERROR: {

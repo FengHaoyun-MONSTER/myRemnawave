@@ -1,3 +1,4 @@
+import { GetGrantedNodeUuidsHandler } from './get-granted-node-uuids';
 import { GetNotConnectedUsersHandler } from './get-not-connected-users';
 import { GetPreparedConfigWithUsersHandler } from './get-prepared-config-with-users';
 import { GetShortUserStatsHandler } from './get-short-user-stats';
@@ -12,6 +13,7 @@ import { GetUsersWithResolvedInboundsHandler } from './get-users-with-resolved-i
 import { ValidateUserIdsHandler } from './validate-user-ids/validate-user-ids.handler';
 
 export const QUERIES = [
+    GetGrantedNodeUuidsHandler,
     GetUserByUniqueFieldHandler,
     GetUserWithResolvedInboundsHandler,
     GetShortUserStatsHandler,

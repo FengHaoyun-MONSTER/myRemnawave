@@ -3,13 +3,12 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import dayjs from 'dayjs';
 
 import { Injectable, Logger } from '@nestjs/common';
-import { EventBus, QueryBus } from '@nestjs/cqrs';
+import { QueryBus } from '@nestjs/cqrs';
 
 import { fail, ok, TResult } from '@common/types';
 import { getDateRangeArrayUtil } from '@common/utils/get-date-range-array.util';
 import { ERRORS } from '@libs/contracts/constants/errors';
 
-import { AddUsersToNodeEvent } from '@modules/nodes/events/add-users-to-node';
 import { ValidateUserIdsQuery } from '@modules/users/queries/validate-user-ids';
 
 import { NodesQueuesService } from '@queue/_nodes';
@@ -38,7 +37,6 @@ export class InternalSquadService {
         private readonly internalSquadRepository: InternalSquadRepository,
         private readonly nodesQueuesService: NodesQueuesService,
         private readonly squadsQueueService: SquadsQueueService,
-        private readonly eventBus: EventBus,
         private readonly queryBus: QueryBus,
     ) {}
 
@@ -72,16 +70,20 @@ export class InternalSquadService {
 
     public async createInternalSquad(
         name: string,
-        inbounds: string[],
+        nodes: string[],
     ): Promise<TResult<GetInternalSquadByUuidResponseModel>> {
         try {
             if (name === 'Default-Squad') {
                 return fail(ERRORS.RESERVED_INTERNAL_SQUAD_NAME);
             }
 
-            const internalSquad = await this.internalSquadRepository.createWithInbounds(
+            const uniqueNodes = [...new Set(nodes)];
+            if (!(await this.internalSquadRepository.areNodeUuidsValid(uniqueNodes))) {
+                return fail(ERRORS.NODE_NOT_FOUND);
+            }
+            const internalSquad = await this.internalSquadRepository.createWithNodes(
                 name,
-                inbounds,
+                uniqueNodes,
             );
 
             return await this.getInternalSquadByUuid(internalSquad.uuid);
@@ -106,7 +108,7 @@ export class InternalSquadService {
     public async updateInternalSquad(
         uuid: string,
         name?: string,
-        inbounds?: string[],
+        nodes?: string[],
     ): Promise<TResult<GetInternalSquadByUuidResponseModel>> {
         try {
             const internalSquad = await this.internalSquadRepository.findByUUID(uuid);
@@ -115,8 +117,8 @@ export class InternalSquadService {
                 return fail(ERRORS.INTERNAL_SQUAD_NOT_FOUND);
             }
 
-            if (!name && !inbounds) {
-                return fail(ERRORS.NAME_OR_INBOUNDS_REQUIRED);
+            if (name === undefined && nodes === undefined) {
+                return fail(ERRORS.NAME_OR_NODES_REQUIRED);
             }
 
             if (name) {
@@ -126,65 +128,16 @@ export class InternalSquadService {
                 });
             }
 
-            if (inbounds !== undefined) {
-                const currentInbounds = await this.internalSquadRepository.getInboundsBySquadUuid(
+            if (nodes !== undefined) {
+                const uniqueNodes = [...new Set(nodes)];
+                if (!(await this.internalSquadRepository.areNodeUuidsValid(uniqueNodes))) {
+                    return fail(ERRORS.NODE_NOT_FOUND);
+                }
+                const currentNodes = await this.internalSquadRepository.getNodeUuidsBySquadUuid(
                     internalSquad.uuid,
                 );
-
-                const currentProfilesMap = new Map<string, Set<string>>();
-                for (const inbound of currentInbounds) {
-                    if (!currentProfilesMap.has(inbound.configProfileUuid)) {
-                        currentProfilesMap.set(inbound.configProfileUuid, new Set());
-                    }
-                    currentProfilesMap.get(inbound.configProfileUuid)!.add(inbound.inboundUuid);
-                }
-
-                await this.syncInternalSquadInbounds(internalSquad, inbounds);
-
-                const newInbounds = await this.internalSquadRepository.getInboundsBySquadUuid(
-                    internalSquad.uuid,
-                );
-
-                const newProfilesMap = new Map<string, Set<string>>();
-                for (const inbound of newInbounds) {
-                    if (!newProfilesMap.has(inbound.configProfileUuid)) {
-                        newProfilesMap.set(inbound.configProfileUuid, new Set());
-                    }
-                    newProfilesMap.get(inbound.configProfileUuid)!.add(inbound.inboundUuid);
-                }
-
-                const allProfileUuids = new Set([
-                    ...currentProfilesMap.keys(),
-                    ...newProfilesMap.keys(),
-                ]);
-
-                const affectedConfigProfiles: string[] = [];
-
-                for (const profileUuid of allProfileUuids) {
-                    const currentSet = currentProfilesMap.get(profileUuid) || new Set();
-                    const newSet = newProfilesMap.get(profileUuid) || new Set();
-
-                    if (currentSet.symmetricDifference(newSet).size > 0) {
-                        affectedConfigProfiles.push(profileUuid);
-                    }
-                }
-
-                if (affectedConfigProfiles.length > 0) {
-                    this.logger.log(
-                        `Internal squad changed, restart nodes for profiles: ${affectedConfigProfiles.join(
-                            ', ',
-                        )}`,
-                    );
-
-                    await Promise.all(
-                        affectedConfigProfiles.map((profileUuid) =>
-                            this.nodesQueuesService.startAllNodesByProfile({
-                                profileUuid,
-                                emitter: 'updateInternalSquad',
-                            }),
-                        ),
-                    );
-                }
+                await this.syncInternalSquadNodes(internalSquad, uniqueNodes);
+                await this.reconcileNodes([...new Set([...currentNodes, ...uniqueNodes])]);
             }
 
             return await this.getInternalSquadByUuid(internalSquad.uuid);
@@ -207,17 +160,12 @@ export class InternalSquadService {
     }
 
     @Transactional()
-    private async syncInternalSquadInbounds(
-        internalSquad: InternalSquadEntity,
-        inbounds: string[],
-    ) {
-        /* Clean & Add inbounds */
-        await this.internalSquadRepository.cleanInbounds(internalSquad.uuid);
+    private async syncInternalSquadNodes(internalSquad: InternalSquadEntity, nodes: string[]) {
+        await this.internalSquadRepository.cleanNodes(internalSquad.uuid);
 
-        if (inbounds.length > 0) {
-            await this.internalSquadRepository.createInbounds(inbounds, internalSquad.uuid);
+        if (nodes.length > 0) {
+            await this.internalSquadRepository.createNodes(nodes, internalSquad.uuid);
         }
-        /* Clean & Add inbounds */
     }
 
     public async deleteInternalSquad(uuid: string): Promise<TResult<boolean>> {
@@ -228,20 +176,9 @@ export class InternalSquadService {
                 return fail(ERRORS.INTERNAL_SQUAD_NOT_FOUND);
             }
 
-            const includedProfiles = new Set<string>();
-
-            for (const inbound of internalSquad.inbounds || []) {
-                includedProfiles.add(inbound.profileUuid);
-            }
-
+            const affectedNodes = internalSquad.nodes.map((node) => node.uuid);
             await this.internalSquadRepository.deleteByUUID(uuid);
-
-            for (const profileUuid of includedProfiles) {
-                await this.nodesQueuesService.startAllNodesByProfile({
-                    profileUuid,
-                    emitter: 'deleteInternalSquad',
-                });
-            }
+            await this.reconcileNodes(affectedNodes);
 
             return ok(true);
         } catch (error) {
@@ -410,7 +347,7 @@ export class InternalSquadService {
                 validatedUsersIds.response,
             );
 
-            await this.eventBus.publish(new AddUsersToNodeEvent(validatedUsersIds.response));
+            await this.reconcileSquadNodes(squadUuid);
 
             return ok(true);
         } catch (error) {
@@ -436,12 +373,26 @@ export class InternalSquadService {
                 validatedUsersIds.response,
             );
 
-            await this.eventBus.publish(new AddUsersToNodeEvent(validatedUsersIds.response));
+            await this.reconcileSquadNodes(squadUuid);
 
             return ok(true);
         } catch (error) {
             this.logger.error(error);
             return fail(ERRORS.REMOVE_MANY_USERS_FROM_INTERNAL_SQUAD_ERROR);
         }
+    }
+
+    private async reconcileSquadNodes(squadUuid: string): Promise<void> {
+        await this.reconcileNodes(
+            await this.internalSquadRepository.getNodeUuidsBySquadUuid(squadUuid),
+        );
+    }
+
+    private async reconcileNodes(nodeUuids: string[]): Promise<void> {
+        await Promise.all(
+            nodeUuids.map((nodeUuid) =>
+                this.nodesQueuesService.startNode({ nodeUuid, force: true }),
+            ),
+        );
     }
 }

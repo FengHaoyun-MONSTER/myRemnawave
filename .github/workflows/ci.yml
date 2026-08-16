@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18.4
+        env:
+          POSTGRES_USER: remnawave
+          POSTGRES_PASSWORD: remnawave_test
+          POSTGRES_DB: remnawave_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U remnawave -d remnawave_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: apps/backend
+    env:
+      DATABASE_URL: postgresql://remnawave:remnawave_test@127.0.0.1:5432/remnawave_test
+      DIRECT_URL: postgresql://remnawave:remnawave_test@127.0.0.1:5432/remnawave_test
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: apps/backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+
+  machine-agent:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/machine-agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/machine-agent/go.mod
+          cache-dependency-path: apps/machine-agent/go.sum
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go build -trimpath ./cmd/agent
+
+  secret-scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

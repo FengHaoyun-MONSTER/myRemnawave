@@ -14,8 +14,7 @@ export const SubscriptionInfoSchema = z.object({
         trafficLimitBytes: z.string(),
         lifetimeTrafficUsedBytes: z.string(),
         username: z.string(),
-        expiresAt: z.iso.datetime()
-            .transform((str) => new Date(str)),
+        expiresAt: z.iso.datetime().transform((str) => new Date(str)),
         isActive: z.boolean(),
         userStatus: z.enum(USERS_STATUS),
         trafficLimitStrategy: z.enum(RESET_PERIODS),

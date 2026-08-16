@@ -34,7 +34,7 @@ export class GetPreparedConfigWithUsersHandler implements IQueryHandler<
         const inboundsUserSets: Map<string, HashedSet> = new Map();
         const snippetsMap: Map<string, unknown> = new Map();
         try {
-            const { configProfileUuid, activeInbounds } = query;
+            const { nodeUuid, configProfileUuid, activeInbounds } = query;
 
             const configProfile = await this.queryBus.execute(
                 new GetConfigProfileByUuidQuery(configProfileUuid),
@@ -64,7 +64,10 @@ export class GetPreparedConfigWithUsersHandler implements IQueryHandler<
 
             config.leaveInbounds(activeInboundsTags);
 
-            const usersStream = this.usersRepository.getUsersForConfigStream(activeInbounds);
+            const usersStream = this.usersRepository.getUsersForConfigStream(
+                nodeUuid,
+                activeInbounds,
+            );
 
             for await (const userBatch of usersStream) {
                 config.includeUserBatch(userBatch, inboundsUserSets);

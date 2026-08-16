@@ -27,12 +27,13 @@ export namespace GetUserAccessibleNodesCommand {
                     uuid: z.uuid(),
                     nodeName: z.string(),
                     countryCode: z.string(),
-                    configProfileUuid: z.uuid(),
-                    configProfileName: z.string(),
+                    protocolKey: z.string().nullable(),
+                    lifecycleState: z.string(),
+                    isPublished: z.boolean(),
                     activeSquads: z.array(
                         z.object({
+                            squadUuid: z.uuid(),
                             squadName: z.string(),
-                            activeInbounds: z.array(z.string()),
                         }),
                     ),
                 }),

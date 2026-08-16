@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-import { ConfigProfileInboundsSchema } from './config-profile-inbounds.schema';
-
 export const InternalSquadSchema = z.object({
     uuid: z.uuid(),
     viewPosition: z.int(),
@@ -9,13 +7,20 @@ export const InternalSquadSchema = z.object({
 
     info: z.object({
         membersCount: z.number(),
-        inboundsCount: z.number(),
+        nodesCount: z.number(),
     }),
 
-    inbounds: z.array(ConfigProfileInboundsSchema),
+    nodes: z.array(
+        z.object({
+            uuid: z.uuid(),
+            name: z.string(),
+            countryCode: z.string(),
+            protocolKey: z.string().nullable(),
+            lifecycleState: z.string(),
+            isPublished: z.boolean(),
+        }),
+    ),
 
-    createdAt: z.iso.datetime()
-        .transform((str) => new Date(str)),
-    updatedAt: z.iso.datetime()
-        .transform((str) => new Date(str)),
+    createdAt: z.iso.datetime().transform((str) => new Date(str)),
+    updatedAt: z.iso.datetime().transform((str) => new Date(str)),
 });

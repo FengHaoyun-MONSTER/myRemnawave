@@ -1,3 +1,5 @@
+import type { ResponseRuleSchemaBase } from './response-rule.schema';
+
 import z from 'zod';
 
 import {
@@ -5,7 +7,6 @@ import {
     RESPONSE_RULES_OPERATORS,
     RESPONSE_RULES_RESPONSE_TYPES,
 } from '../../constants';
-import type { ResponseRuleSchemaBase } from './response-rule.schema';
 
 export const EXAMPLES_SRR_BLANK_RULE: z.infer<typeof ResponseRuleSchemaBase> = {
     name: 'Blank rule',

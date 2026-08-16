@@ -1,0 +1,335 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { IncomingMessage } from 'node:http';
+import { createServer, Server } from 'node:https';
+import { isAbsolute } from 'node:path';
+import { TLSSocket } from 'node:tls';
+import { WebSocket, WebSocketServer } from 'ws';
+import { z } from 'zod';
+
+import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
+
+import { TypedConfigService } from '@common/config/app-config';
+
+import {
+    agentEnvelopeSchema,
+    commandEnvelope,
+    commandResultSchema,
+    heartbeatSchema,
+    helloSchema,
+    MACHINE_CONTROL_MAX_MESSAGE_BYTES,
+} from './machine-control.protocol';
+import { MachinesRepository } from './repositories/machines.repository';
+
+const MACHINE_ID_HEADER = 'x-myremnawave-machine-id';
+const HELLO_TIMEOUT_MS = 15_000;
+const PING_INTERVAL_MS = 45_000;
+
+const inventorySchema = z
+    .object({
+        hostname: z.string().min(1).max(255),
+        osId: z.string().min(1).max(64),
+        osVersion: z.string().max(64),
+        osPrettyName: z.string().max(255),
+        architecture: z.string().min(1).max(32),
+        cpuCount: z.int().min(1).max(4096),
+        memoryBytes: z.number().nonnegative(),
+        diskFreeBytes: z.number().nonnegative(),
+    })
+    .strict();
+
+interface SessionState {
+    machineUuid: string;
+    helloReceived: boolean;
+}
+
+@Injectable()
+export class MachineControlGateway implements OnApplicationBootstrap, OnApplicationShutdown {
+    private readonly logger = new Logger(MachineControlGateway.name);
+    private readonly sessions = new Map<string, WebSocket>();
+    private readonly liveness = new WeakMap<WebSocket, boolean>();
+    private server?: Server;
+    private webSocketServer?: WebSocketServer;
+    private pingTimer?: NodeJS.Timeout;
+
+    constructor(
+        private readonly config: TypedConfigService,
+        private readonly machinesRepository: MachinesRepository,
+    ) {}
+
+    async onApplicationBootstrap(): Promise<void> {
+        const publicUrl = this.config.get('MACHINE_CONTROL_PUBLIC_URL');
+        if (!publicUrl) {
+            this.logger.warn('Machine control gateway is disabled');
+            return;
+        }
+
+        const certPath = this.config.get('MACHINE_CONTROL_TLS_CERT_PATH');
+        const keyPath = this.config.get('MACHINE_CONTROL_TLS_KEY_PATH');
+        if (!certPath || !keyPath || !isAbsolute(certPath) || !isAbsolute(keyPath)) {
+            throw new Error('Machine control TLS certificate and key paths must be absolute');
+        }
+        const authority = await this.machinesRepository.getCertificateAuthority();
+        if (!authority) {
+            throw new Error('Machine control certificate authority is unavailable');
+        }
+
+        const [certificate, privateKey] = await Promise.all([
+            readFile(certPath),
+            readFile(keyPath),
+        ]);
+        const expectedPath = new URL(publicUrl).pathname;
+        this.server = createServer({
+            cert: certificate,
+            key: privateKey,
+            ca: authority.caCert,
+            minVersion: 'TLSv1.3',
+            requestCert: true,
+            rejectUnauthorized: true,
+        });
+        this.webSocketServer = new WebSocketServer({
+            noServer: true,
+            maxPayload: MACHINE_CONTROL_MAX_MESSAGE_BYTES,
+            perMessageDeflate: false,
+        });
+        this.server.on('request', (_request, response) => {
+            response.writeHead(404).end();
+        });
+        this.server.on('upgrade', (request, socket, head) => {
+            void this.handleUpgrade(expectedPath, request, socket as TLSSocket, head);
+        });
+
+        await new Promise<void>((resolve, reject) => {
+            const onError = (error: Error) => reject(error);
+            this.server!.once('error', onError);
+            this.server!.listen(this.config.getOrThrow('MACHINE_CONTROL_PORT'), '0.0.0.0', () => {
+                this.server!.off('error', onError);
+                resolve();
+            });
+        });
+        this.pingTimer = setInterval(() => this.pingSessions(), PING_INTERVAL_MS);
+        this.pingTimer.unref();
+        this.logger.log(
+            `Machine control gateway listening on port ${this.config.getOrThrow('MACHINE_CONTROL_PORT')}`,
+        );
+    }
+
+    async onApplicationShutdown(): Promise<void> {
+        if (this.pingTimer) {
+            clearInterval(this.pingTimer);
+        }
+        for (const session of this.sessions.values()) {
+            session.close(1001, 'server shutting down');
+        }
+        await Promise.all([
+            new Promise<void>((resolve) => {
+                if (!this.webSocketServer) return resolve();
+                this.webSocketServer.close(() => resolve());
+            }),
+            new Promise<void>((resolve) => {
+                if (!this.server) return resolve();
+                this.server.close(() => resolve());
+            }),
+        ]);
+    }
+
+    private async handleUpgrade(
+        expectedPath: string,
+        request: IncomingMessage,
+        socket: TLSSocket,
+        head: Buffer,
+    ): Promise<void> {
+        try {
+            if (new URL(request.url ?? '/', 'https://localhost').pathname !== expectedPath) {
+                return rejectUpgrade(socket, 404, 'Not Found');
+            }
+            const machineUuid = singleHeader(request.headers[MACHINE_ID_HEADER]);
+            if (!machineUuid || !socket.authorized) {
+                return rejectUpgrade(socket, 401, 'Unauthorized');
+            }
+            const peer = socket.getPeerCertificate();
+            if (!peer.raw || peer.subject?.CN !== machineUuid) {
+                return rejectUpgrade(socket, 401, 'Unauthorized');
+            }
+            const machine = await this.machinesRepository.findByUuid(machineUuid);
+            const fingerprint = createHash('sha256').update(peer.raw).digest('hex');
+            if (
+                !machine ||
+                machine.archivedAt ||
+                !machine.clientCertFingerprint ||
+                !machine.clientCertExpiresAt ||
+                machine.clientCertExpiresAt <= new Date() ||
+                !safeFingerprintEqual(machine.clientCertFingerprint, fingerprint)
+            ) {
+                return rejectUpgrade(socket, 401, 'Unauthorized');
+            }
+
+            this.webSocketServer!.handleUpgrade(request, socket, head, (webSocket) => {
+                this.startSession(webSocket, machineUuid);
+            });
+        } catch (error) {
+            this.logger.warn(`Rejected Machine Agent connection: ${safeError(error)}`);
+            rejectUpgrade(socket, 400, 'Bad Request');
+        }
+    }
+
+    private startSession(webSocket: WebSocket, machineUuid: string): void {
+        const oldSession = this.sessions.get(machineUuid);
+        if (oldSession) {
+            oldSession.close(4001, 'superseded by a new session');
+        }
+        this.sessions.set(machineUuid, webSocket);
+        this.liveness.set(webSocket, true);
+        const state: SessionState = { machineUuid, helloReceived: false };
+        const helloTimer = setTimeout(
+            () => webSocket.close(4002, 'hello message not received'),
+            HELLO_TIMEOUT_MS,
+        );
+        helloTimer.unref();
+
+        let pipeline = Promise.resolve();
+        webSocket.on('pong', () => this.liveness.set(webSocket, true));
+        webSocket.on('message', (data, isBinary) => {
+            pipeline = pipeline
+                .then(() => this.handleMessage(webSocket, state, data, isBinary))
+                .catch((error) => {
+                    this.logger.warn(
+                        `Closing invalid Machine Agent session ${machineUuid}: ${safeError(error)}`,
+                    );
+                    webSocket.close(4003, 'invalid control message');
+                });
+        });
+        webSocket.on('close', () => {
+            clearTimeout(helloTimer);
+            if (this.sessions.get(machineUuid) === webSocket) {
+                this.sessions.delete(machineUuid);
+            }
+        });
+        webSocket.on('error', (error) => {
+            this.logger.warn(`Machine Agent session ${machineUuid} error: ${safeError(error)}`);
+        });
+    }
+
+    private async handleMessage(
+        webSocket: WebSocket,
+        state: SessionState,
+        data: Buffer | ArrayBuffer | Buffer[],
+        isBinary: boolean,
+    ): Promise<void> {
+        if (isBinary) {
+            throw new Error('binary control messages are not supported');
+        }
+        const envelope = agentEnvelopeSchema.parse(
+            JSON.parse(Buffer.concat(toBuffers(data)).toString()),
+        );
+
+        if (!state.helloReceived && envelope.type !== 'hello') {
+            throw new Error('hello must be the first control message');
+        }
+        if (envelope.type === 'hello') {
+            if (state.helloReceived) throw new Error('duplicate hello message');
+            const hello = helloSchema.parse(envelope.payload);
+            if (hello.machineId !== state.machineUuid) throw new Error('machine identity mismatch');
+            const connected = await this.machinesRepository.markAgentConnected({
+                uuid: state.machineUuid,
+                agentVersion: hello.agentVersion,
+                capabilities: [...new Set(hello.capabilities)].sort(),
+                now: new Date(),
+            });
+            if (!connected) throw new Error('machine is no longer eligible to connect');
+            state.helloReceived = true;
+            await this.machinesRepository.ensureInventoryCommand(state.machineUuid, new Date());
+            await this.sendReadyCommands(webSocket, state.machineUuid);
+            return;
+        }
+        if (envelope.type === 'heartbeat') {
+            const heartbeat = heartbeatSchema.parse(envelope.payload);
+            if (heartbeat.machineId !== state.machineUuid)
+                throw new Error('machine identity mismatch');
+            const updated = await this.machinesRepository.markAgentHeartbeat(
+                state.machineUuid,
+                new Date(),
+            );
+            if (!updated) throw new Error('machine is no longer eligible to connect');
+            await this.sendReadyCommands(webSocket, state.machineUuid);
+            return;
+        }
+
+        const result = commandResultSchema.parse(envelope.payload);
+        const commandKind = await this.machinesRepository.getActiveCommandKind(
+            state.machineUuid,
+            result.commandId,
+            result.idempotencyKey,
+        );
+        if (!commandKind) throw new Error('unknown or already completed command result');
+        const validatedResult =
+            commandKind === 'inventory' && result.status === 'succeeded'
+                ? inventorySchema.parse(result.payload)
+                : result.payload;
+        const accepted = await this.machinesRepository.completeCommand({
+            machineUuid: state.machineUuid,
+            commandUuid: result.commandId,
+            idempotencyKey: result.idempotencyKey,
+            status: result.status,
+            errorCode: result.errorCode,
+            result: validatedResult,
+            completedAt: new Date(),
+        });
+        if (!accepted) throw new Error('unknown or already completed command result');
+        await this.sendReadyCommands(webSocket, state.machineUuid);
+    }
+
+    private async sendReadyCommands(webSocket: WebSocket, machineUuid: string): Promise<void> {
+        const commands = await this.machinesRepository.getReadyCommands(machineUuid, new Date());
+        for (const command of commands) {
+            if (webSocket.readyState !== WebSocket.OPEN) return;
+            webSocket.send(
+                JSON.stringify(
+                    commandEnvelope({
+                        uuid: command.uuid,
+                        kind: command.kind,
+                        idempotencyKey: command.idempotencyKey,
+                        deadlineAt: command.deadlineAt,
+                        payload: command.payload,
+                    }),
+                ),
+            );
+        }
+    }
+
+    private pingSessions(): void {
+        for (const session of this.sessions.values()) {
+            if (!this.liveness.get(session)) {
+                session.terminate();
+                continue;
+            }
+            this.liveness.set(session, false);
+            session.ping();
+        }
+    }
+}
+
+function singleHeader(value: string | string[] | undefined): string | null {
+    return typeof value === 'string' ? value : null;
+}
+
+function safeFingerprintEqual(expected: string, actual: string): boolean {
+    if (!/^[a-f0-9]{64}$/i.test(expected) || !/^[a-f0-9]{64}$/i.test(actual)) return false;
+    return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(actual, 'hex'));
+}
+
+function rejectUpgrade(socket: TLSSocket, status: number, reason: string): void {
+    if (!socket.destroyed) {
+        socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
+    }
+}
+
+function toBuffers(data: Buffer | ArrayBuffer | Buffer[]): Buffer[] {
+    if (Array.isArray(data)) return data;
+    return [Buffer.isBuffer(data) ? data : Buffer.from(data)];
+}
+
+function safeError(error: unknown): string {
+    const message = error instanceof Error ? error.message : 'unknown error';
+    return message.slice(0, 1024).replaceAll('\0', '');
+}

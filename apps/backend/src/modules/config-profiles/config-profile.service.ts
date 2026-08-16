@@ -313,7 +313,7 @@ export class ConfigProfileService {
             }
 
             const inbounds =
-                await this.configProfileRepository.getInboundsWithSquadsByProfileUuid(profileUuid);
+                await this.configProfileRepository.getInboundsByProfileUuid(profileUuid);
 
             return ok(new GetAllInboundsResponseModel(inbounds, inbounds.length));
         } catch (error) {

@@ -17,6 +17,7 @@ export class GetPreparedConfigWithUsersQuery extends Query<
     TResult<IGetPreparedConfigWithUsersResponse>
 > {
     constructor(
+        public readonly nodeUuid: string,
         public readonly configProfileUuid: string,
         public readonly activeInbounds: ConfigProfileInboundEntity[],
     ) {

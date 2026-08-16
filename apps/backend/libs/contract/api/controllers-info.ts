@@ -31,6 +31,11 @@ export const CONTROLLERS_INFO = {
         description: '',
         resource: 'nodes',
     },
+    MACHINES: {
+        tag: 'Machines Controller',
+        description: 'Manage physical servers and their Machine Agent enrollment.',
+        resource: 'machines',
+    },
     NODE_PLUGINS: {
         tag: 'Node Plugins Controller',
         description: '',

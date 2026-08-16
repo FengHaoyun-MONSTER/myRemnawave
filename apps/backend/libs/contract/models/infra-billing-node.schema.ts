@@ -21,11 +21,8 @@ export const InfraBillingNodeSchema = z.object({
         countryCode: true,
     }).nullable(),
 
-    nextBillingAt: z.iso.datetime()
-        .transform((str) => new Date(str)),
+    nextBillingAt: z.iso.datetime().transform((str) => new Date(str)),
 
-    createdAt: z.iso.datetime()
-        .transform((str) => new Date(str)),
-    updatedAt: z.iso.datetime()
-        .transform((str) => new Date(str)),
+    createdAt: z.iso.datetime().transform((str) => new Date(str)),
+    updatedAt: z.iso.datetime().transform((str) => new Date(str)),
 });

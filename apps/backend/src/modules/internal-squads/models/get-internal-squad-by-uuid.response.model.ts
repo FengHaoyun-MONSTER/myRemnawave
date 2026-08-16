@@ -1,5 +1,3 @@
-import { ConfigProfileInboundEntity } from '@modules/config-profiles/entities';
-
 import { InternalSquadWithInfoEntity } from '../entities/internal-squad-with-info.entity';
 
 export class GetInternalSquadByUuidResponseModel {
@@ -8,9 +6,9 @@ export class GetInternalSquadByUuidResponseModel {
     public readonly name: string;
     public readonly info: {
         membersCount: number;
-        inboundsCount: number;
+        nodesCount: number;
     };
-    public readonly inbounds: ConfigProfileInboundEntity[];
+    public readonly nodes: InternalSquadWithInfoEntity['nodes'];
 
     public readonly createdAt: Date;
     public readonly updatedAt: Date;
@@ -21,9 +19,9 @@ export class GetInternalSquadByUuidResponseModel {
         this.name = entity.name;
         this.info = {
             membersCount: Number(entity.membersCount),
-            inboundsCount: Number(entity.inboundsCount),
+            nodesCount: Number(entity.nodesCount),
         };
-        this.inbounds = entity.inbounds;
+        this.nodes = entity.nodes;
 
         this.createdAt = entity.createdAt;
         this.updatedAt = entity.updatedAt;
