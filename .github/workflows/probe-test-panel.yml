@@ -31,10 +31,12 @@ jobs:
           esac
           test "${SSH_PORT}" -ge 1
           test "${SSH_PORT}" -le 65535
-          case "${SSH_HOST_KEY_SHA256}" in
-            SHA256:*) ;;
-            *) echo 'SSH host key fingerprint must use SHA256:... format' >&2; exit 1 ;;
-          esac
+          fingerprint="$(printf '%s' "${SSH_HOST_KEY_SHA256}" | tr -d '\r\n')"
+          fingerprint="${fingerprint#SHA256:}"
+          if [[ ! "${fingerprint}" =~ ^[A-Za-z0-9+/]{43}=?$ ]]; then
+            echo 'SSH host key fingerprint has an invalid SHA-256 format' >&2
+            exit 1
+          fi
 
       - name: Install SSH password helper
         run: |
@@ -74,6 +76,7 @@ jobs:
           test -s "${scanned}"
           actual="$(ssh-keygen -lf "${scanned}" -E sha256 | awk '{ print $2 }' | sort -u)"
           expected="$(printf '%s' "${SSH_HOST_KEY_SHA256}" | tr -d '\r\n')"
+          expected="SHA256:${expected#SHA256:}"
           test "$(printf '%s\n' "${actual}" | sed '/^$/d' | wc -l)" -eq 1
           if [ "${actual}" != "${expected}" ]; then
             echo 'SSH host key fingerprint mismatch' >&2
