@@ -12,7 +12,7 @@ export namespace GetMachineCommand {
         MACHINES_ROUTES.GET_BY_UUID(':uuid'),
         'get',
         'Get a machine',
-        { scope: 'read', kind: 'read' },
+        { scope: 'get', kind: 'read' },
     );
 
     export const RequestParamsSchema = z.object({ uuid: z.uuid() });

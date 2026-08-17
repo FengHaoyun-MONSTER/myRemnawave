@@ -23,7 +23,7 @@ export const WARP_STATUS = [
     'FAILED',
 ] as const;
 
-const DateSchema = z.union([z.date(), z.iso.datetime().transform((value) => new Date(value))]);
+const DateSchema = z.iso.datetime().transform((value) => new Date(value));
 
 export const MachineSchema = z.object({
     uuid: z.uuid(),

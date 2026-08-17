@@ -9,7 +9,7 @@ export namespace GetMachinesCommand {
     export const TSQ_url = url;
 
     export const endpointDetails = getEndpointDetails(MACHINES_ROUTES.GET, 'get', 'Get machines', {
-        scope: 'read',
+        scope: 'list',
         kind: 'read',
     });
 

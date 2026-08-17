@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CqrsModule } from '@nestjs/cqrs';
 
 import { KeygenModule } from '@modules/keygen/keygen.module';
 
@@ -9,7 +10,7 @@ import { ProtocolTemplateBootstrapService } from './protocol-template-bootstrap.
 import { MachinesRepository } from './repositories/machines.repository';
 
 @Module({
-    imports: [KeygenModule],
+    imports: [CqrsModule, KeygenModule],
     controllers: [MachinesController, MachineEnrollmentController],
     providers: [
         MachinesRepository,

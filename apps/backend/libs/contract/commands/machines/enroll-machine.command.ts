@@ -34,7 +34,7 @@ export namespace EnrollMachineCommand {
             clientCertPem: z.string(),
             caCertPem: z.string(),
             controlUrl: z.url().startsWith('wss://'),
-            expiresAt: z.date(),
+            expiresAt: z.iso.datetime().transform((value) => new Date(value)),
         }),
     });
 }

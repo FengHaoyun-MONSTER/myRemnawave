@@ -11,7 +11,7 @@ export namespace RetryMachineCommand {
         MACHINES_ROUTES.ACTIONS.RETRY(':uuid'),
         'post',
         'Retry failed machine node provisioning steps',
-        { scope: 'provision', kind: 'write' },
+        { scope: 'retry', kind: 'write' },
     );
 
     export const RequestParamSchema = z.object({ uuid: z.uuid() });
