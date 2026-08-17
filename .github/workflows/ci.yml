@@ -95,3 +95,60 @@ jobs:
       - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deployment-assets:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate shell syntax and installer arguments
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -n deploy/panel/install-panel.sh
+          bash -n deploy/panel/test-install-panel.sh
+          bash -n deploy/panel/deploy.sh
+          sh deploy/panel/install-panel.sh --help 2>&1 | grep -F 'panel-vX.Y.Z'
+
+          invalid_output="$(mktemp)"
+          trap 'rm -f "${invalid_output}"' EXIT
+          if docker run --rm \
+            -v "${PWD}:/mnt:ro" \
+            ubuntu:24.04@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea \
+            sh /mnt/deploy/panel/install-panel.sh \
+            --domain invalid \
+            --version panel-v0.1.0 >"${invalid_output}" 2>&1; then
+            echo 'Installer accepted an invalid domain.' >&2
+            exit 1
+          fi
+          grep -F 'A valid public panel domain is required.' "${invalid_output}"
+
+          if docker run --rm \
+            -v "${PWD}:/mnt:ro" \
+            ubuntu:24.04@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea \
+            sh /mnt/deploy/panel/install-panel.sh \
+            --domain panel.example.com \
+            --version latest >"${invalid_output}" 2>&1; then
+            echo 'Installer accepted a mutable version.' >&2
+            exit 1
+          fi
+          grep -F 'The version must be an exact panel-vX.Y.Z release.' "${invalid_output}"
+      - name: Exercise fresh install safety behavior
+        run: >-
+          docker run --rm
+          -v "${PWD}:/repo:ro"
+          ubuntu:24.04@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea
+          bash /repo/deploy/panel/test-install-panel.sh
+      - name: Run ShellCheck
+        run: >-
+          docker run --rm
+          -v "${PWD}:/mnt:ro"
+          koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
+          deploy/panel/install-panel.sh
+          deploy/panel/test-install-panel.sh
+          deploy/panel/deploy.sh
+      - name: Run actionlint
+        run: >-
+          docker run --rm
+          -v "${PWD}:/repo:ro"
+          -w /repo
+          rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9

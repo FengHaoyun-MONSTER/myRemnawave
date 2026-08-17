@@ -4,6 +4,39 @@ The `Deploy Test Panel` GitHub Actions workflow installs and updates the panel a
 `alipaneltest.thinderbox.com`. It is intentionally limited to a fresh
 development/test server and must not be reused for production.
 
+## Fresh-server installer
+
+Stable test installations use the exact command documented in the repository
+README. Each `panel-vX.Y.Z` GitHub Release contains:
+
+- `install-panel.sh`, the non-interactive bootstrap;
+- `myremnawave-panel-linux-amd64.tar.gz`, the prebuilt panel image;
+- `myremnawave-panel-source.tar.gz`, the exact source and deployment assets;
+- `panel-release-metadata`, binding the version to a full source commit;
+- `SHA256SUMS`, covering the image, source, and metadata.
+
+The installer supports fresh Ubuntu 22.04/24.04 amd64 servers. It requires at
+least 2 GiB RAM and 8 GiB free under `/opt`; a direct IPv4 `A` record must point
+to the server, and TCP 80/443 plus UDP 443 must be free and reachable. It stops
+when an active installation exists. A matching `.install-intent` permits safe
+retry of an interrupted first installation but cannot be reused for a different
+domain or release.
+
+For environments where GitHub downloads are performed in advance, download
+`SHA256SUMS`, the image, source archive, and metadata into one server directory,
+then run the downloaded installer with the additional option:
+
+```bash
+sudo sh install-panel.sh \
+  --domain panel.example.com \
+  --version panel-v0.1.0 \
+  --asset-dir /path/to/release-assets
+```
+
+This avoids downloading the large panel assets during bootstrap. Docker APT
+packages and digest-pinned infrastructure images still require network access;
+it is not a fully air-gapped installation mode.
+
 ## Security and scope
 
 - The workflow requires the explicit confirmation value `DEPLOY_TEST_PANEL`.
