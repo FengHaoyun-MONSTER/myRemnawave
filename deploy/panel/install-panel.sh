@@ -161,6 +161,8 @@ printf '%s' "${release_version}" | grep -Eq '^panel-v[0-9]+\.[0-9]+\.[0-9]+$' \
 case "${machine_control_public_port}" in
     ''|*[!0-9]*) die 'Machine-control public port must be numeric.' ;;
 esac
+[ "${#machine_control_public_port}" -le 5 ] \
+    || die 'Machine-control public port must be between 1 and 65535.'
 [ "${machine_control_public_port}" -ge 1 ] && [ "${machine_control_public_port}" -le 65535 ] \
     || die 'Machine-control public port must be between 1 and 65535.'
 case "${machine_control_public_port}" in

@@ -136,6 +136,8 @@ validate_machine_control_public_port() {
 
     [[ "${port}" =~ ^[0-9]+$ ]] \
         || die 'Machine-control public port must be numeric.'
+    [ "${#port}" -le 5 ] \
+        || die 'Machine-control public port must be between 1 and 65535.'
     [ "${port}" -ge 1 ] && [ "${port}" -le 65535 ] \
         || die 'Machine-control public port must be between 1 and 65535.'
     case "${port}" in

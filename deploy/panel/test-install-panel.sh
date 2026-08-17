@@ -114,4 +114,13 @@ if PATH="${mock_bin}:${PATH}" sh "${INSTALLER}" \
     exit 1
 fi
 
+if PATH="${mock_bin}:${PATH}" sh "${INSTALLER}" \
+        --domain "${TEST_DOMAIN}" \
+        --version "${TEST_VERSION}" \
+        --machine-control-public-port 999999999999999999999999 \
+        --asset-dir "${assets}"; then
+    echo 'Installer accepted an out-of-range machine-control public port.' >&2
+    exit 1
+fi
+
 echo 'Fresh install, safe resume, and overwrite protection: PASS'

@@ -82,7 +82,7 @@ grep -Fqx \
     "${invalid_internal_env}"
 grep -Fqx 'MACHINE_CONTROL_PORT=3389' "${invalid_internal_env}"
 
-for invalid_port in 0 65536 abc 80 443 3000 3001 5432 6379; do
+for invalid_port in 0 65536 999999999999999999999999 abc 80 443 3000 3001 5432 6379; do
     if (validate_machine_control_public_port "${invalid_port}"); then
         echo "Invalid public port was accepted: ${invalid_port}" >&2
         exit 1
