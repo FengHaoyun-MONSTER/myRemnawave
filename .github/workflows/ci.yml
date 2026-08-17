@@ -66,7 +66,20 @@ jobs:
       - run: go vet ./...
       - run: go build -trimpath ./cmd/agent
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
-      - run: sh -n install.sh
+      - run: sh -n install.sh test-install-debian-13.sh
+      - name: Run installer ShellCheck
+        run: >-
+          docker run --rm
+          -v "${PWD}:/mnt:ro"
+          koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
+          install.sh
+          test-install-debian-13.sh
+      - name: Verify Debian 13 installer support
+        run: >-
+          docker run --rm
+          -v "${PWD}:/mnt:ro"
+          debian:13@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958
+          sh /mnt/test-install-debian-13.sh /mnt/install.sh
 
   frontend:
     runs-on: ubuntu-24.04

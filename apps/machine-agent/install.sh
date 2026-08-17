@@ -3,7 +3,7 @@
 set -eu
 
 repository="FengHaoyun-MONSTER/myRemnawave"
-agent_version="${MYREMNAWAVE_AGENT_VERSION:-v0.1.0}"
+agent_version="${MYREMNAWAVE_AGENT_VERSION:-v0.1.1}"
 panel_url=""
 enrollment_token=""
 
@@ -30,10 +30,16 @@ case "$panel_url" in https://*) ;; *) echo "panel URL must use HTTPS" >&2; exit 
 case "$enrollment_token" in mrw_enroll_*) ;; *) echo "invalid enrollment token" >&2; exit 1 ;; esac
 case "$agent_version" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "agent version must be an exact vX.Y.Z release" >&2; exit 1 ;; esac
 
+# /etc/os-release is supplied by every supported distribution.
+# shellcheck disable=SC1091
 . /etc/os-release
 case "${ID:-}:${VERSION_ID:-}" in
-    debian:12|ubuntu:22.04|ubuntu:24.04) ;;
-    *) echo "supported systems: Debian 12, Ubuntu 22.04, Ubuntu 24.04" >&2; exit 1 ;;
+    debian:12|debian:13|ubuntu:22.04|ubuntu:24.04) ;;
+    *)
+        echo "unsupported operating system: ${PRETTY_NAME:-${ID:-unknown} ${VERSION_ID:-unknown}}" >&2
+        echo "supported systems: Debian 12, Debian 13, Ubuntu 22.04, Ubuntu 24.04" >&2
+        exit 1
+        ;;
 esac
 
 export DEBIAN_FRONTEND=noninteractive

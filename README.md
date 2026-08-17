@@ -42,7 +42,7 @@ requirements, pre-downloaded assets, layout, and recovery details.
 - node-local ACME certificates and Reality private keys;
 - machine-level Cloudflare WARP with configuration-driven routing;
 - staged configuration rollout and an auditable update center;
-- Debian 12, Ubuntu 22.04 LTS, and Ubuntu 24.04 LTS test coverage.
+- Debian 12/13, Ubuntu 22.04 LTS, and Ubuntu 24.04 LTS test coverage.
 
 The approved product baseline is
 [docs/requirements/requirements-baseline-v1.0.md](docs/requirements/requirements-baseline-v1.0.md).

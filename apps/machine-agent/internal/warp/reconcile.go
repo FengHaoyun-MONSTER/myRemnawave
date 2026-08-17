@@ -127,11 +127,11 @@ func (h *Handler) ensureInstalled(ctx context.Context) error {
 	}
 	osRelease, err := os.ReadFile("/etc/os-release")
 	if err != nil {
-		return errors.New("WARP installation requires Debian 12 or Ubuntu 22.04/24.04")
+		return errors.New("WARP installation requires Debian 12/13 or Ubuntu 22.04/24.04")
 	}
 	codename := parseOSRelease(string(osRelease), "VERSION_CODENAME")
 	osID := parseOSRelease(string(osRelease), "ID")
-	if !map[string]bool{"bookworm": true, "jammy": true, "noble": true}[codename] || !map[string]bool{"debian": true, "ubuntu": true}[osID] {
+	if !isSupportedPlatform(osID, codename) {
 		return errors.New("WARP installation is unsupported on this operating system")
 	}
 	temporaryKey := filepath.Join(os.TempDir(), "myremnawave-cloudflare-warp-key.gpg")
@@ -152,6 +152,17 @@ func (h *Handler) ensureInstalled(ctx context.Context) error {
 	}
 	_, err = h.run(ctx, "apt-get", "install", "--assume-yes", "--no-install-recommends", "cloudflare-warp")
 	return err
+}
+
+func isSupportedPlatform(osID, codename string) bool {
+	switch osID {
+	case "debian":
+		return codename == "bookworm" || codename == "trixie"
+	case "ubuntu":
+		return codename == "jammy" || codename == "noble"
+	default:
+		return false
+	}
 }
 
 func (h *Handler) ensureRelay(ctx context.Context, port uint16) error {

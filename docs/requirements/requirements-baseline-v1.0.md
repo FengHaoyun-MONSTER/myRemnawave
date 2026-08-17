@@ -245,7 +245,7 @@ deployment and a published port is never silently changed.
 
 ## 13. Compatibility, scale, and quality
 
-The tested server matrix is Debian 12, Ubuntu 22.04 LTS, and Ubuntu 24.04 LTS.
+The tested server matrix is Debian 12/13, Ubuntu 22.04 LTS, and Ubuntu 24.04 LTS.
 Each receives real Docker, systemd, WARP, HTTP-01, restart-recovery, and protocol
 validation rather than install-script-only testing.
 

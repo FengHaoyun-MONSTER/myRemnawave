@@ -45,7 +45,7 @@ type WizardMachine = { machine: Machine; enrollmentToken?: string }
 type ProtocolSelection = Record<'HYSTERIA2' | 'VLESS_REALITY' | 'VLESS_TLS_VISION', boolean>
 type CertificateMode = 'HTTP_01' | 'IMPORT_EXISTING'
 
-const AGENT_VERSION = 'v0.1.0'
+const AGENT_VERSION = 'v0.1.1'
 
 const initialProtocols: ProtocolSelection = {
     VLESS_REALITY: true,
