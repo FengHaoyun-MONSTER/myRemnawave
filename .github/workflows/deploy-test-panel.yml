@@ -247,19 +247,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          headers="$(mktemp)"
-          body="$(mktemp)"
-          trap 'rm -f "${headers}" "${body}"' EXIT
-          curl --fail --silent --show-error --location \
-            --retry 6 --retry-delay 5 --retry-all-errors \
-            --max-time 20 \
-            --dump-header "${headers}" \
-            --output "${body}" \
-            "https://${PANEL_DOMAIN}/"
-          grep -Eiq '^strict-transport-security:[[:space:]]*max-age=' "${headers}"
-          grep -Eiq '^x-content-type-options:[[:space:]]*nosniff' "${headers}"
-          grep -Eiq '<!doctype html|<html' "${body}"
-
           sshpass -e ssh \
             -p "${SSH_PORT}" \
             -o BatchMode=no \
@@ -267,13 +254,18 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \
             "${SSH_USER}@${SSH_HOST}" \
-            "bash -s -- '${GITHUB_SHA}'" <<'REMOTE'
+            "bash -s -- '${GITHUB_SHA}' '${PANEL_DOMAIN}'" <<'REMOTE'
           set -euo pipefail
           expected_commit="$1"
+          panel_domain="$2"
           actual_commit="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' myremnawave-panel)"
           [ "${actual_commit}" = "${expected_commit}" ]
           [ "$(docker inspect --format '{{.State.Health.Status}}' myremnawave-panel)" = 'healthy' ]
           [ "$(docker inspect --format '{{.State.Status}}' myremnawave-caddy)" = 'running' ]
+          curl --fail --silent --show-error --max-time 20 \
+            --noproxy '*' \
+            --resolve "${panel_domain}:443:127.0.0.1" \
+            "https://${panel_domain}/" >/dev/null
           for port in 3000 3001 5432 6379; do
             if ss -ltnH "sport = :${port}" 2>/dev/null | grep -q .; then
               echo "Unexpected host listener on TCP ${port}" >&2
@@ -287,6 +279,50 @@ jobs:
             --file /opt/myremnawave-panel/compose.yml \
             ps
           REMOTE
+
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          trap 'rm -f "${headers}" "${body}"' EXIT
+          public_ready='no'
+          for _ in $(seq 1 36); do
+            if curl --fail --silent --show-error --location \
+              --connect-timeout 10 --max-time 20 \
+              --dump-header "${headers}" \
+              --output "${body}" \
+              "https://${PANEL_DOMAIN}/"; then
+              public_ready='yes'
+              break
+            fi
+            sleep 5
+          done
+          if [ "${public_ready}" != 'yes' ]; then
+            echo 'Public HTTPS verification failed; collecting redacted Caddy diagnostics.' >&2
+            sshpass -e ssh \
+              -p "${SSH_PORT}" \
+              -o BatchMode=no \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \
+              "${SSH_USER}@${SSH_HOST}" \
+              "bash -s -- '${PANEL_DOMAIN}'" <<'REMOTE'
+          set -u
+          panel_domain="$1"
+          docker inspect --format 'CADDY_STATUS={{.State.Status}} RESTARTS={{.RestartCount}}' myremnawave-caddy
+          curl --fail --silent --show-error --max-time 20 \
+            --noproxy '*' \
+            --resolve "${panel_domain}:443:127.0.0.1" \
+            --write-out 'LOCAL_HTTPS_STATUS=%{http_code}\n' \
+            --output /dev/null \
+            "https://${panel_domain}/" || true
+          docker logs --tail 300 myremnawave-caddy 2>&1 \
+            | grep -E '"logger":"tls|"level":"error"|certificate|ACME' \
+            | tail -n 100 || true
+          REMOTE
+            exit 1
+          fi
+          grep -Eiq '^strict-transport-security:[[:space:]]*max-age=' "${headers}"
+          grep -Eiq '^x-content-type-options:[[:space:]]*nosniff' "${headers}"
+          grep -Eiq '<!doctype html|<html' "${body}"
 
           {
             echo '### Test panel deployment'
