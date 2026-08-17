@@ -559,9 +559,11 @@ export class MachinesRepository {
         });
     }
 
-    async findByEnrollmentTokenHash(hash: string): Promise<MachineEntity | null> {
-        const result = await this.prisma.machines.findUnique({
-            where: { enrollmentTokenHash: hash },
+    async findByEnrollmentCredentialHash(hash: string): Promise<MachineEntity | null> {
+        const result = await this.prisma.machines.findFirst({
+            where: {
+                OR: [{ enrollmentTokenHash: hash }, { enrollmentReplayTokenHash: hash }],
+            },
         });
         return result ? new MachineEntity(result) : null;
     }
@@ -578,6 +580,11 @@ export class MachinesRepository {
                 enrollmentTokenHash: tokenHash,
                 enrollmentExpiresAt: expiresAt,
                 enrollmentUsedAt: null,
+                enrollmentReplayTokenHash: null,
+                enrollmentAttemptId: null,
+                enrollmentCsrFingerprint: null,
+                enrollmentResponse: Prisma.JsonNull,
+                enrollmentReplayExpiresAt: null,
             },
         });
         return new MachineEntity(result);
@@ -590,6 +597,10 @@ export class MachinesRepository {
         certificateSerial: string;
         certificateFingerprint: string;
         certificateExpiresAt: Date;
+        attemptId: string;
+        csrFingerprint: string;
+        response: Prisma.InputJsonValue;
+        replayExpiresAt: Date;
     }): Promise<boolean> {
         const result = await this.prisma.machines.updateMany({
             where: {
@@ -603,6 +614,11 @@ export class MachinesRepository {
                 status: 'ENROLLING',
                 enrollmentTokenHash: null,
                 enrollmentUsedAt: input.now,
+                enrollmentReplayTokenHash: input.tokenHash,
+                enrollmentAttemptId: input.attemptId,
+                enrollmentCsrFingerprint: input.csrFingerprint,
+                enrollmentResponse: input.response,
+                enrollmentReplayExpiresAt: input.replayExpiresAt,
                 clientCertSerial: input.certificateSerial,
                 clientCertFingerprint: input.certificateFingerprint,
                 clientCertExpiresAt: input.certificateExpiresAt,
@@ -652,6 +668,11 @@ export class MachinesRepository {
                 agentCapabilities: input.capabilities,
                 agentConnectedAt: input.now,
                 agentLastSeenAt: input.now,
+                enrollmentReplayTokenHash: null,
+                enrollmentAttemptId: null,
+                enrollmentCsrFingerprint: null,
+                enrollmentResponse: Prisma.JsonNull,
+                enrollmentReplayExpiresAt: null,
             },
         });
         return result.count === 1;

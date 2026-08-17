@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 import {
     BadRequestException,
@@ -28,7 +28,16 @@ import { MachineResponseModel } from './models/machine.response.model';
 import { PROTOCOL_KEYS } from './protocol-templates';
 import { MachinesRepository, ProvisioningError } from './repositories/machines.repository';
 
-const ENROLLMENT_TTL_MS = 15 * 60 * 1_000;
+const ENROLLMENT_TTL_MS = 30 * 60 * 1_000;
+const ENROLLMENT_REPLAY_TTL_MS = 30 * 60 * 1_000;
+
+interface SerializedEnrollmentResponse {
+    machineUuid: string;
+    clientCertPem: string;
+    caCertPem: string;
+    controlUrl: string;
+    expiresAt: string;
+}
 
 @Injectable()
 export class MachinesService {
@@ -41,6 +50,7 @@ export class MachinesService {
     ) {}
 
     async createMachine(dto: CreateMachineBodyDto) {
+        this.assertControlReady();
         const enrollment = this.createEnrollmentSecret();
         try {
             const machine = await this.machinesRepository.create({
@@ -78,7 +88,17 @@ export class MachinesService {
         return new MachineResponseModel(machine);
     }
 
+    getControlStatus() {
+        const publicUrl = this.config.get('MACHINE_CONTROL_PUBLIC_URL') ?? null;
+        return {
+            enabled: publicUrl !== null,
+            ready: this.machineControlGateway.isReady(),
+            publicUrl,
+        };
+    }
+
     async rotateEnrollmentToken(uuid: string) {
+        this.assertControlReady();
         const machine = await this.machinesRepository.findByUuid(uuid);
         if (!machine || machine.archivedAt) {
             throw new NotFoundException('Machine not found');
@@ -104,13 +124,19 @@ export class MachinesService {
 
     async enroll(dto: EnrollMachineBodyDto) {
         const controlUrl = this.config.get('MACHINE_CONTROL_PUBLIC_URL');
-        if (!controlUrl) {
+        this.assertControlReady();
+        if (!controlUrl)
             throw new ServiceUnavailableException('Machine control URL is not configured');
-        }
 
         const tokenHash = hashEnrollmentToken(dto.enrollmentToken);
-        const machine = await this.machinesRepository.findByEnrollmentTokenHash(tokenHash);
+        // v0.1.1 agents did not send an attempt ID. Accept their first exchange for
+        // upgrade compatibility, while v0.1.2+ agents retain deterministic replay.
+        const attemptId = dto.attemptId ?? randomUUID();
+        let machine = await this.machinesRepository.findByEnrollmentCredentialHash(tokenHash);
         const now = new Date();
+        const csrFingerprint = createHash('sha256').update(dto.csrPem, 'utf8').digest('hex');
+        const replay = replayEnrollment(machine, tokenHash, attemptId, csrFingerprint, now);
+        if (replay) return deserializeEnrollmentResponse(replay);
         if (
             !machine ||
             machine.archivedAt ||
@@ -146,8 +172,27 @@ export class MachinesService {
             certificateSerial: certificate.serialNumber,
             certificateFingerprint: certificate.fingerprintSha256,
             certificateExpiresAt: certificate.expiresAt,
+            attemptId,
+            csrFingerprint,
+            response: {
+                machineUuid: machine.uuid,
+                clientCertPem: certificate.certificatePem,
+                caCertPem: certificateAuthority.caCert,
+                controlUrl,
+                expiresAt: certificate.expiresAt.toISOString(),
+            },
+            replayExpiresAt: new Date(now.getTime() + ENROLLMENT_REPLAY_TTL_MS),
         });
         if (!consumed) {
+            machine = await this.machinesRepository.findByEnrollmentCredentialHash(tokenHash);
+            const concurrentReplay = replayEnrollment(
+                machine,
+                tokenHash,
+                attemptId,
+                csrFingerprint,
+                new Date(),
+            );
+            if (concurrentReplay) return deserializeEnrollmentResponse(concurrentReplay);
             throw new UnauthorizedException('Enrollment token is invalid or expired');
         }
 
@@ -354,6 +399,56 @@ export class MachinesService {
             expiresAt: new Date(Date.now() + ENROLLMENT_TTL_MS),
         };
     }
+
+    private assertControlReady(): void {
+        if (!this.machineControlGateway.isReady()) {
+            throw new ServiceUnavailableException('Machine control plane is not ready');
+        }
+    }
+}
+
+function replayEnrollment(
+    machine: MachineResponseSource | null,
+    tokenHash: string,
+    attemptId: string,
+    csrFingerprint: string,
+    now: Date,
+): SerializedEnrollmentResponse | null {
+    if (
+        !machine ||
+        machine.archivedAt ||
+        machine.enrollmentReplayTokenHash !== tokenHash ||
+        machine.enrollmentAttemptId !== attemptId ||
+        machine.enrollmentCsrFingerprint !== csrFingerprint ||
+        !machine.enrollmentReplayExpiresAt ||
+        machine.enrollmentReplayExpiresAt <= now
+    ) {
+        return null;
+    }
+    return parseSerializedEnrollmentResponse(machine.enrollmentResponse);
+}
+
+type MachineResponseSource = Awaited<
+    ReturnType<MachinesRepository['findByEnrollmentCredentialHash']>
+>;
+
+function parseSerializedEnrollmentResponse(value: unknown): SerializedEnrollmentResponse | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const response = value as Record<string, unknown>;
+    if (
+        typeof response.machineUuid !== 'string' ||
+        typeof response.clientCertPem !== 'string' ||
+        typeof response.caCertPem !== 'string' ||
+        typeof response.controlUrl !== 'string' ||
+        typeof response.expiresAt !== 'string'
+    ) {
+        return null;
+    }
+    return response as unknown as SerializedEnrollmentResponse;
+}
+
+function deserializeEnrollmentResponse(response: SerializedEnrollmentResponse) {
+    return { ...response, expiresAt: new Date(response.expiresAt) };
 }
 
 function hashEnrollmentToken(token: string): string {

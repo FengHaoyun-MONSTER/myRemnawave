@@ -3,7 +3,7 @@
 set -eu
 
 repository="FengHaoyun-MONSTER/myRemnawave"
-agent_version="${MYREMNAWAVE_AGENT_VERSION:-v0.1.1}"
+agent_version="${MYREMNAWAVE_AGENT_VERSION:-v0.1.2}"
 panel_url=""
 enrollment_token=""
 
@@ -22,13 +22,26 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$(id -u)" -eq 0 ] || { echo "installer must run as root" >&2; exit 1; }
-[ ! -e /etc/myremnawave-agent ] && [ ! -e /usr/local/lib/myremnawave-agent ] || {
-    echo "Machine Agent is already installed; this bootstrap only supports fresh enrollment" >&2
-    exit 1
-}
 case "$panel_url" in https://*) ;; *) echo "panel URL must use HTTPS" >&2; exit 1 ;; esac
 case "$enrollment_token" in mrw_enroll_*) ;; *) echo "invalid enrollment token" >&2; exit 1 ;; esac
 case "$agent_version" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "agent version must be an exact vX.Y.Z release" >&2; exit 1 ;; esac
+
+for path in /etc/myremnawave-agent /etc/myremnawave-agent.enrollment /usr/local/lib/myremnawave-agent; do
+    [ ! -L "$path" ] || { echo "refusing symbolic link at $path" >&2; exit 1; }
+done
+
+# The command itself was fetched with curl, so validate the complete panel path
+# before installing packages or writing service files. Any HTTP response proves
+# DNS, TCP and TLS reachability; the enrollment endpoint is POST-only.
+preflight_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --connect-timeout 10 --max-time 20 --proto '=https' --tlsv1.2 "$panel_url")" || {
+    echo "panel preflight failed before installation; check DNS, TCP 443, TLS, and panel health" >&2
+    exit 1
+}
+[ "$preflight_status" != "000" ] || {
+    echo "panel preflight did not receive an HTTP response" >&2
+    exit 1
+}
 
 # /etc/os-release is supplied by every supported distribution.
 # shellcheck disable=SC1091
@@ -77,12 +90,25 @@ printf '%s\n%s\n' "$asset_checksum" "$service_checksum" > "$work_dir/SELECTED_SH
 
 install -d -m 0755 /usr/local/lib/myremnawave-agent
 install -m 0755 "$work_dir/$asset" /usr/local/lib/myremnawave-agent/myremnawave-agent
+printf '%s\n' "$agent_version" > /usr/local/lib/myremnawave-agent/.version
+chmod 0644 /usr/local/lib/myremnawave-agent/.version
 install -d -m 0755 /etc/systemd/system
 install -m 0644 "$work_dir/myremnawave-agent.service" /etc/systemd/system/myremnawave-agent.service
 
-/usr/local/lib/myremnawave-agent/myremnawave-agent enroll \
-    --url "$panel_url" \
-    --token "$enrollment_token"
+if [ ! -d /etc/myremnawave-agent ]; then
+    /usr/local/lib/myremnawave-agent/myremnawave-agent enroll \
+        --url "$panel_url" \
+        --token "$enrollment_token"
+else
+    for credential in client.crt client.key ca.crt agent.env; do
+        [ -f "/etc/myremnawave-agent/$credential" ] \
+            && [ ! -L "/etc/myremnawave-agent/$credential" ] || {
+            echo "existing credential directory contains an unsafe or missing $credential" >&2
+            exit 1
+        }
+    done
+    echo "Machine Agent credentials already exist; enrollment exchange skipped."
+fi
 systemctl daemon-reload
 systemctl enable --now myremnawave-agent
 systemctl --no-pager --full status myremnawave-agent

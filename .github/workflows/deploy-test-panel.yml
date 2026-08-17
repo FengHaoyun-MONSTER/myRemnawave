@@ -272,6 +272,12 @@ jobs:
               exit 1
             fi
           done
+          ss -ltnH 'sport = :3010' | grep -q .
+          if curl --silent --show-error --max-time 10 \
+            --output /dev/null "https://${panel_domain}:3010/api/machine-control"; then
+            echo 'Machine control unexpectedly accepted a client without an mTLS certificate' >&2
+            exit 1
+          fi
           docker compose \
             --project-name myremnawave \
             --env-file /opt/myremnawave-panel/.env \
@@ -324,10 +330,32 @@ jobs:
           grep -Eiq '^x-content-type-options:[[:space:]]*nosniff' "${headers}"
           grep -Eiq '<!doctype html|<html' "${body}"
 
+          control_cert="$(mktemp)"
+          control_log="$(mktemp)"
+          trap 'rm -f "${headers}" "${body}" "${control_cert}" "${control_log}"' EXIT
+          if ! timeout 15 openssl s_client \
+            -connect "${PANEL_DOMAIN}:3010" \
+            -servername "${PANEL_DOMAIN}" \
+            -tls1_3 -showcerts </dev/null >"${control_log}" 2>&1; then
+            grep -q -- '-----BEGIN CERTIFICATE-----' "${control_log}" || {
+              echo 'Public TCP 3010 did not present a TLS certificate.' >&2
+              cat "${control_log}" >&2
+              exit 1
+            }
+          fi
+          sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' \
+            "${control_log}" | sed -n '1,/-----END CERTIFICATE-----/p' >"${control_cert}"
+          openssl x509 -in "${control_cert}" -noout -checkhost "${PANEL_DOMAIN}"
+          if curl --insecure --silent --show-error --max-time 15 \
+            --output /dev/null "https://${PANEL_DOMAIN}:3010/api/machine-control"; then
+            echo 'Public TCP 3010 accepted a client without a Machine certificate.' >&2
+            exit 1
+          fi
+
           {
             echo '### Test panel deployment'
             echo
             echo "- Source commit: \`${GITHUB_SHA}\`"
             echo "- URL: https://${PANEL_DOMAIN}"
-            echo '- HTTPS, security headers, container health, image provenance, and private service ports: PASS'
+            echo '- HTTPS, security headers, container health, image provenance, private service ports, and TCP 3010 mTLS rejection: PASS'
           } >>"${GITHUB_STEP_SUMMARY}"

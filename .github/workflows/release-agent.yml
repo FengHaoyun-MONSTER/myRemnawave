@@ -23,11 +23,16 @@ jobs:
         run: |
           go test -race ./...
           go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
-          sh -n install.sh test-install-debian-13.sh
+          sh -n install.sh test-install-debian-13.sh test-install-resume.sh
           docker run --rm \
             -v "${PWD}:/mnt:ro" \
             debian:13@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958 \
             sh /mnt/test-install-debian-13.sh /mnt/install.sh
+          docker run --rm \
+            -e MYREMNAWAVE_INSTALLER_TEST_CONTAINER=1 \
+            -v "${PWD}:/mnt:ro" \
+            debian:13@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958 \
+            sh /mnt/test-install-resume.sh /mnt/install.sh
       - name: Build release binaries
         env:
           VERSION: ${{ github.ref_name }}

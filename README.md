@@ -12,7 +12,9 @@ The project is under active development and is **not production-ready**.
 The versioned installer deploys a fresh panel without compiling the frontend or
 backend on the server. The first release supports Ubuntu 22.04/24.04 on amd64.
 Before running it, point the panel domain's direct IPv4 `A` record to the new
-server and make sure inbound TCP 80/443 and UDP 443 are allowed.
+server and make sure inbound TCP 80/443/3010 and UDP 443 are allowed. TCP 3010
+is the dedicated mutual-TLS Machine Agent control channel; it does not accept
+ordinary unauthenticated HTTP clients.
 
 Replace `panel.example.com` and run as a user with `sudo` access:
 

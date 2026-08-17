@@ -16,6 +16,11 @@ export class MachineEntity implements Machines {
     enrollmentTokenHash: string | null;
     enrollmentExpiresAt: Date | null;
     enrollmentUsedAt: Date | null;
+    enrollmentReplayTokenHash: string | null;
+    enrollmentAttemptId: string | null;
+    enrollmentCsrFingerprint: string | null;
+    enrollmentResponse: Prisma.JsonValue | null;
+    enrollmentReplayExpiresAt: Date | null;
     clientCertSerial: string | null;
     clientCertFingerprint: string | null;
     clientCertExpiresAt: Date | null;

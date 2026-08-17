@@ -5,6 +5,7 @@ const ACTIONS_ROUTE = 'actions' as const;
 export const MACHINES_ROUTES = {
     CREATE: '',
     GET: '',
+    GET_CONTROL_STATUS: 'control-status',
     GET_BY_UUID: (uuid: string) => uuid,
     ACTIONS: {
         ROTATE_ENROLLMENT_TOKEN: (uuid: string) =>

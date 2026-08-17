@@ -126,7 +126,7 @@ COPY apps/backend/docker-entrypoint.sh ./
 RUN chmod 0755 /opt/app/docker-entrypoint.sh /opt/app/dist/cli.js \
     && ln -s /opt/app/dist/cli.js /usr/local/bin/cli
 
-EXPOSE 3000 3001
+EXPOSE 3000 3001 3010
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=45s --retries=5 \
     CMD curl --fail --silent --show-error http://127.0.0.1:3001/health >/dev/null \

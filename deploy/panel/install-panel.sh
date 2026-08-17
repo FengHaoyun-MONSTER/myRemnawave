@@ -184,6 +184,7 @@ if [ "${is_resume}" = 'no' ]; then
     check_port_available tcp 80
     check_port_available tcp 443
     check_port_available udp 443
+    check_port_available tcp 3010
 
     dns_ipv4="$(getent ahostsv4 "${panel_domain}" | awk '{ print $1 }' | sort -u)"
     [ -n "${dns_ipv4}" ] || die 'The panel domain has no IPv4 DNS result.'

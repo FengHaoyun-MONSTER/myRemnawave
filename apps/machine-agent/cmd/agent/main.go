@@ -7,13 +7,11 @@ import (
 	"errors"
 	"flag"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"syscall"
-	"time"
 
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/config"
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/control"
@@ -89,7 +87,7 @@ func runEnrollment(logger *slog.Logger, arguments []string) {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	machineUUID, err := enrollment.Enroll(ctx, configuration, &http.Client{Timeout: 30 * time.Second})
+	machineUUID, err := enrollment.Enroll(ctx, configuration, enrollment.NewHTTPClient())
 	if err != nil {
 		logger.Error("machine enrollment failed", "error", err.Error())
 		os.Exit(1)

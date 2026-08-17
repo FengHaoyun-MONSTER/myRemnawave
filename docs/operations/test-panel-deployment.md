@@ -17,7 +17,7 @@ README. Each `panel-vX.Y.Z` GitHub Release contains:
 
 The installer supports fresh Ubuntu 22.04/24.04 amd64 servers. It requires at
 least 2 GiB RAM and 8 GiB free under `/opt`; a direct IPv4 `A` record must point
-to the server, and TCP 80/443 plus UDP 443 must be free and reachable. It stops
+to the server, and TCP 80/443/3010 plus UDP 443 must be free and reachable. It stops
 when an active installation exists. A matching `.install-intent` permits safe
 retry of an interrupted first installation but cannot be reused for a different
 domain or release.
@@ -55,10 +55,12 @@ it is not a fully air-gapped installation mode.
   production images and the Dockerfile frontend remain pinned by SHA-256 digest.
 - Secrets are generated on the server with mode `0600`; they are not returned to
   GitHub Actions or stored in the repository.
-- PostgreSQL, Valkey, and the panel API have no host-published ports. Only Caddy
-  publishes HTTP/HTTPS.
-- The machine-control listener and node-protocol certificates are not enabled by
-  this panel-only deployment.
+- PostgreSQL, Valkey, and the panel API have no host-published ports. Caddy
+  publishes HTTP/HTTPS, and the panel publishes only the dedicated TCP 3010
+  Machine Agent listener.
+- TCP 3010 requires a valid client certificate signed by the panel's private
+  Machine CA. The listener certificate is generated in memory at backend start,
+  contains the panel hostname SAN, and is never written to the host filesystem.
 
 ## Layout and rollback points
 

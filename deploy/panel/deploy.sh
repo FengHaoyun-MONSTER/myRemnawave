@@ -146,6 +146,8 @@ JWT_AUTH_LIFETIME=12
 IS_TELEGRAM_NOTIFICATIONS_ENABLED=false
 PANEL_DOMAIN=${domain}
 FRONT_END_DOMAIN=https://${domain}
+MACHINE_CONTROL_PUBLIC_URL=wss://${domain}:3010/api/machine-control
+MACHINE_CONTROL_PORT=3010
 SUB_PUBLIC_DOMAIN=${domain}/api/sub
 METRICS_USER=metrics
 METRICS_PASS=${metrics_password}
@@ -154,6 +156,26 @@ POSTGRES_USER=remnawave
 POSTGRES_PASSWORD=${database_password}
 POSTGRES_DB=remnawave
 EOF
+    chmod 0600 "${target}"
+}
+
+ensure_machine_control_env() {
+    local target="$1" domain="$2"
+    local expected_url="MACHINE_CONTROL_PUBLIC_URL=wss://${domain}:3010/api/machine-control"
+    local expected_port='MACHINE_CONTROL_PORT=3010'
+
+    if grep -q '^MACHINE_CONTROL_PUBLIC_URL=' "${target}"; then
+        grep -Fqx "${expected_url}" "${target}" \
+            || die 'Existing machine-control URL does not match the panel domain and TCP 3010.'
+    else
+        printf '%s\n' "${expected_url}" >>"${target}"
+    fi
+    if grep -q '^MACHINE_CONTROL_PORT=' "${target}"; then
+        grep -Fqx "${expected_port}" "${target}" \
+            || die 'Existing machine-control port is not TCP 3010.'
+    else
+        printf '%s\n' "${expected_port}" >>"${target}"
+    fi
     chmod 0600 "${target}"
 }
 
@@ -204,6 +226,14 @@ main() {
     require_command gzip
     require_command openssl
     require_command sha256sum
+    require_command ss
+
+    if ss -ltnH 'sport = :3010' 2>/dev/null | grep -q .; then
+        local control_owner
+        control_owner="$(docker ps --filter publish=3010 --format '{{.Names}}' | sort -u)"
+        [ "${control_owner}" = 'myremnawave-panel' ] \
+            || die 'TCP 3010 is already occupied by a process outside the managed panel.'
+    fi
 
     printf '%s  %s\n' "${expected_image_sha256}" "${image_archive}" \
         | sha256sum --check --status \
@@ -234,11 +264,12 @@ main() {
     if [ -L "${deploy_root}/current" ]; then
         previous_release="$(readlink -f "${deploy_root}/current")"
     fi
-    for file in compose.yml Caddyfile .deployment.env; do
+    for file in .env compose.yml Caddyfile .deployment.env; do
         if [ -f "${deploy_root}/${file}" ]; then
             cp -a "${deploy_root}/${file}" "${backup_dir}/${file}"
         fi
     done
+    ensure_machine_control_env "${deploy_root}/.env" "${panel_domain}"
 
     if [ -n "${previous_release}" ] \
         && [ -f "${backup_dir}/compose.yml" ] \

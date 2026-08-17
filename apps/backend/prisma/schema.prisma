@@ -254,6 +254,11 @@ model Machines {
   enrollmentTokenHash String?   @unique @map("enrollment_token_hash") @db.VarChar(128)
   enrollmentExpiresAt DateTime? @map("enrollment_expires_at")
   enrollmentUsedAt    DateTime? @map("enrollment_used_at")
+  enrollmentReplayTokenHash String?   @unique @map("enrollment_replay_token_hash") @db.VarChar(128)
+  enrollmentAttemptId       String?   @map("enrollment_attempt_id") @db.Uuid
+  enrollmentCsrFingerprint  String?   @map("enrollment_csr_fingerprint") @db.VarChar(64)
+  enrollmentResponse        Json?     @map("enrollment_response")
+  enrollmentReplayExpiresAt DateTime? @map("enrollment_replay_expires_at")
 
   clientCertSerial      String?   @unique @map("client_cert_serial") @db.VarChar(128)
   clientCertFingerprint String?   @unique @map("client_cert_fingerprint") @db.VarChar(128)
