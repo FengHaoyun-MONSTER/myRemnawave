@@ -10,7 +10,8 @@ The project is under active development and is **not production-ready**.
 ## One-command test installation
 
 The versioned installer deploys a fresh panel without compiling the frontend or
-backend on the server. The first release supports Ubuntu 22.04/24.04 on amd64.
+backend on the server. The current installer supports Debian 13 and Ubuntu
+22.04/24.04 on amd64.
 Before running it, point the panel domain's direct IPv4 `A` record to the new
 server and make sure inbound TCP 80/443/3010 and UDP 443 are allowed. TCP 3010
 is the dedicated mutual-TLS Machine Agent control channel; it does not accept
@@ -20,8 +21,8 @@ Replace `panel.example.com` and run as a user with `sudo` access:
 
 ```bash
 bash -o pipefail -c "curl -fsSL --proto '=https' --tlsv1.2 \
-  https://github.com/FengHaoyun-MONSTER/myRemnawave/releases/download/panel-v0.1.0/install-panel.sh \
-  | sudo sh -s -- --domain panel.example.com --version panel-v0.1.0"
+  https://github.com/FengHaoyun-MONSTER/myRemnawave/releases/download/panel-v0.1.1/install-panel.sh \
+  | sudo sh -s -- --domain panel.example.com --version panel-v0.1.1"
 ```
 
 The installer accepts only an exact `panel-vX.Y.Z` release, verifies the source

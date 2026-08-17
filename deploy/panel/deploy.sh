@@ -18,22 +18,29 @@ require_command() {
     command -v "$1" >/dev/null 2>&1 || die "Required command is unavailable: $1"
 }
 
+detect_docker_distribution() {
+    # shellcheck source=/dev/null
+    . /etc/os-release
+    case "${ID:-}:${VERSION_ID:-}" in
+        debian:13) printf 'debian\n' ;;
+        ubuntu:22.04|ubuntu:24.04) printf 'ubuntu\n' ;;
+        *) die "Unsupported system for automatic Docker installation: ${ID:-unknown} ${VERSION_ID:-unknown}" ;;
+    esac
+}
+
 install_docker() {
     if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
         log 'Docker Engine and Compose are already installed.'
         return
     fi
 
+    local docker_distribution
+    docker_distribution="$(detect_docker_distribution)"
     # shellcheck source=/dev/null
     . /etc/os-release
-    [ "${ID:-}" = 'ubuntu' ] || die 'Automatic Docker installation only supports Ubuntu.'
-    case "${VERSION_ID:-}" in
-        22.04 | 24.04) ;;
-        *) die "Unsupported Ubuntu version: ${VERSION_ID:-unknown}" ;;
-    esac
     [ "$(dpkg --print-architecture)" = 'amd64' ] || die 'This test deployment supports amd64 only.'
 
-    log "Installing Docker Engine from Docker's signed Ubuntu repository."
+    log "Installing Docker Engine from Docker's signed ${docker_distribution} repository."
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install --yes --no-install-recommends ca-certificates curl gnupg
@@ -47,8 +54,8 @@ install_docker() {
     trap 'rm -f "${key_tmp:-}" "${source_tmp:-}" "${probe_tmp:-}"' RETURN
 
     for candidate in \
-        'https://download.docker.com/linux/ubuntu' \
-        'https://mirrors.aliyun.com/docker-ce/linux/ubuntu'; do
+        "https://download.docker.com/linux/${docker_distribution}" \
+        "https://mirrors.aliyun.com/docker-ce/linux/${docker_distribution}"; do
         : >"${key_tmp}"
         : >"${probe_tmp}"
         if ! curl --fail --show-error --silent --location \

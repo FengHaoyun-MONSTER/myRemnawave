@@ -5,7 +5,7 @@ set -Eeuo pipefail
 readonly INSTALLER='/repo/deploy/panel/install-panel.sh'
 readonly DEPLOY_ROOT='/opt/myremnawave-panel'
 readonly TEST_DOMAIN='panel.example.com'
-readonly TEST_VERSION='panel-v0.1.0'
+readonly TEST_VERSION='panel-v0.1.1'
 readonly SOURCE_COMMIT='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 
 test_root="$(mktemp -d /tmp/myremnawave-installer-test.XXXXXX)"

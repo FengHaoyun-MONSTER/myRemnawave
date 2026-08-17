@@ -20,11 +20,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      PANEL_DOMAIN: alipaneltest.thinderbox.com
+      PANEL_DOMAIN: upcloudfreetier.thinderbox.com
       SSH_HOST: ${{ secrets.DEV_SERVICE_IP }}
       SSH_PORT: ${{ secrets.DEV_SERVICE_SSH_PORT }}
       SSH_USER: ${{ secrets.DEV_SERVICE_SSH_USER }}
-      SSHPASS: ${{ secrets.DEV_SERVICE_SSH_PASWARD }}
+      SSH_PRIVATE_KEY: ${{ secrets.DEV_SERVICE_SSH_PRIVATE_KEY }}
       SSH_HOST_KEY_SHA256: ${{ secrets.DEV_SERVICE_SSH_HOST_KEY_SHA256 }}
     steps:
       - name: Check out the selected source commit
@@ -42,7 +42,7 @@ jobs:
           [ "${DEPLOY_CONFIRMATION}" = 'DEPLOY_TEST_PANEL' ]
           test -n "${SSH_HOST}"
           test -n "${SSH_USER}"
-          test -n "${SSHPASS}"
+          test -n "${SSH_PRIVATE_KEY}"
           test -n "${SSH_HOST_KEY_SHA256}"
           case "${SSH_PORT}" in
             ''|*[!0-9]*) echo 'SSH port must be numeric' >&2; exit 1 ;;
@@ -59,10 +59,15 @@ jobs:
           fi
           [[ "${fingerprint}" =~ ^SHA256:[A-Za-z0-9+/]{43}=?$ ]]
 
-      - name: Install SSH password helper
+      - name: Prepare SSH private key
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install --assume-yes --no-install-recommends sshpass
+          set -euo pipefail
+          key_path="${RUNNER_TEMP}/deploy-key"
+          umask 077
+          printf '%s\n' "${SSH_PRIVATE_KEY}" >"${key_path}"
+          ssh-keygen -y -f "${key_path}" >/dev/null
+          echo "SSH_KEY_PATH=${key_path}" >>"${GITHUB_ENV}"
 
       - name: Verify DNS points to the test server
         shell: bash
@@ -155,37 +160,40 @@ jobs:
           remote_staging="/tmp/myremnawave-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           [[ "${remote_staging}" =~ ^/tmp/myremnawave-deploy-[0-9]+-[0-9]+$ ]]
           ssh_options=(
+            -i "${SSH_KEY_PATH}"
             -p "${SSH_PORT}"
-            -o BatchMode=no
+            -o BatchMode=yes
             -o IdentitiesOnly=yes
             -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts"
           )
           cleanup() {
-            sshpass -e ssh "${ssh_options[@]}" "${remote}" \
+            ssh "${ssh_options[@]}" "${remote}" \
               "rm -rf -- '${remote_staging}'" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
 
-          sshpass -e ssh "${ssh_options[@]}" "${remote}" \
+          ssh "${ssh_options[@]}" "${remote}" \
             "install -d -m 0700 '${remote_staging}'"
-          sshpass -e scp \
+          scp \
+            -i "${SSH_KEY_PATH}" \
             -P "${SSH_PORT}" \
-            -o BatchMode=no \
+            -o BatchMode=yes \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \
             "${SOURCE_ARCHIVE}" "${remote}:${remote_staging}/source.tar.gz"
-          sshpass -e scp \
+          scp \
+            -i "${SSH_KEY_PATH}" \
             -P "${SSH_PORT}" \
-            -o BatchMode=no \
+            -o BatchMode=yes \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \
             "${IMAGE_ARCHIVE}" "${remote}:${remote_staging}/panel-image.tar.gz"
 
           remote_command="bash -s -- '${remote_staging}' '${GITHUB_SHA}' '${SOURCE_SHA256}' '${IMAGE_SHA256}' '${PANEL_DOMAIN}'"
-          sshpass -e ssh "${ssh_options[@]}" "${remote}" "${remote_command}" <<'REMOTE'
+          ssh "${ssh_options[@]}" "${remote}" "${remote_command}" <<'REMOTE'
           set -Eeuo pipefail
 
           die() {
@@ -247,9 +255,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sshpass -e ssh \
+          ssh \
+            -i "${SSH_KEY_PATH}" \
             -p "${SSH_PORT}" \
-            -o BatchMode=no \
+            -o BatchMode=yes \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \
@@ -303,9 +312,10 @@ jobs:
           done
           if [ "${public_ready}" != 'yes' ]; then
             echo 'Public HTTPS verification failed; collecting redacted Caddy diagnostics.' >&2
-            sshpass -e ssh \
+            ssh \
+              -i "${SSH_KEY_PATH}" \
               -p "${SSH_PORT}" \
-              -o BatchMode=no \
+              -o BatchMode=yes \
               -o IdentitiesOnly=yes \
               -o StrictHostKeyChecking=yes \
               -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \

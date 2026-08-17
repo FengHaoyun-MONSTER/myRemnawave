@@ -152,8 +152,8 @@ printf '%s' "${release_version}" | grep -Eq '^panel-v[0-9]+\.[0-9]+\.[0-9]+$' \
 # shellcheck source=/dev/null
 . /etc/os-release
 case "${ID:-}:${VERSION_ID:-}" in
-    ubuntu:22.04|ubuntu:24.04) ;;
-    *) die 'Supported systems: Ubuntu 22.04 or Ubuntu 24.04.' ;;
+    debian:13|ubuntu:22.04|ubuntu:24.04) ;;
+    *) die 'Supported systems: Debian 13, Ubuntu 22.04, or Ubuntu 24.04.' ;;
 esac
 [ "$(uname -m)" = 'x86_64' ] || die 'The first panel installer release supports amd64 only.'
 
