@@ -150,3 +150,43 @@ jobs:
             done
           fi
           REMOTE
+
+      - name: Compare local and public HTTPS paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="${SSH_USER}@${SSH_HOST}"
+          ssh_options=(
+            -p "${SSH_PORT}"
+            -o BatchMode=no
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts"
+          )
+          sshpass -e ssh "${ssh_options[@]}" "${remote}" \
+            "bash -s -- '${PANEL_DOMAIN}'" <<'REMOTE'
+          set -euo pipefail
+          panel_domain="$1"
+          docker inspect --format 'CADDY_STATUS={{.State.Status}} RESTARTS={{.RestartCount}}' myremnawave-caddy
+          curl --fail --silent --show-error --max-time 20 \
+            --noproxy '*' \
+            --resolve "${panel_domain}:443:127.0.0.1" \
+            --write-out 'LOCAL_HTTPS_STATUS=%{http_code}\n' \
+            --output /dev/null \
+            "https://${panel_domain}/"
+          REMOTE
+
+          if ! curl --fail --silent --show-error --location \
+            --connect-timeout 10 --max-time 20 \
+            --write-out 'PUBLIC_HTTPS_STATUS=%{http_code}\n' \
+            --output /dev/null \
+            "https://${PANEL_DOMAIN}/"; then
+            echo 'Public HTTPS failed while the server-local HTTPS path was healthy.' >&2
+            sshpass -e ssh "${ssh_options[@]}" "${remote}" <<'REMOTE'
+          set -u
+          docker logs --tail 300 myremnawave-caddy 2>&1 \
+            | grep -E '"logger":"tls|"level":"error"|certificate|ACME' \
+            | tail -n 100 || true
+          REMOTE
+            exit 1
+          fi

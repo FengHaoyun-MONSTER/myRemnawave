@@ -200,6 +200,7 @@ main() {
     install_docker
     configure_docker_registry_mirror
     require_command curl
+    require_command cmp
     require_command gzip
     require_command openssl
     require_command sha256sum
@@ -227,7 +228,7 @@ main() {
             || die 'Existing deployment is configured for another panel domain.'
     fi
 
-    local backup_dir previous_release=''
+    local backup_dir previous_release='' runtime_files_unchanged='no'
     backup_dir="${deploy_root}/backups/$(date -u +'%Y%m%dT%H%M%SZ')-${source_commit:0:12}"
     install -d -m 0700 "${backup_dir}"
     if [ -L "${deploy_root}/current" ]; then
@@ -238,6 +239,14 @@ main() {
             cp -a "${deploy_root}/${file}" "${backup_dir}/${file}"
         fi
     done
+
+    if [ -n "${previous_release}" ] \
+        && [ -f "${backup_dir}/compose.yml" ] \
+        && [ -f "${backup_dir}/Caddyfile" ] \
+        && cmp --silent "${release_dir}/deploy/panel/compose.yml" "${backup_dir}/compose.yml" \
+        && cmp --silent "${release_dir}/deploy/panel/Caddyfile" "${backup_dir}/Caddyfile"; then
+        runtime_files_unchanged='yes'
+    fi
 
     install -m 0644 "${release_dir}/deploy/panel/compose.yml" "${deploy_root}/compose.yml.next"
     install -m 0644 "${release_dir}/deploy/panel/Caddyfile" "${deploy_root}/Caddyfile.next"
@@ -265,8 +274,21 @@ EOF
         fi
     fi
 
-    log 'Starting the database, cache, panel, and HTTPS proxy.'
-    "${compose[@]}" up --detach --remove-orphans
+    local supporting_services_running='yes'
+    for container in myremnawave-database myremnawave-valkey myremnawave-caddy; do
+        if [ "$(docker inspect --format '{{.State.Running}}' "${container}" 2>/dev/null || true)" != 'true' ]; then
+            supporting_services_running='no'
+            break
+        fi
+    done
+
+    if [ "${runtime_files_unchanged}" = 'yes' ] && [ "${supporting_services_running}" = 'yes' ]; then
+        log 'Updating only the panel container; database, cache, and HTTPS proxy remain running.'
+        "${compose[@]}" up --detach --no-deps panel
+    else
+        log 'Starting the database, cache, panel, and HTTPS proxy.'
+        "${compose[@]}" up --detach --remove-orphans
+    fi
 
     if ! wait_for_service myremnawave-panel healthy 48; then
         "${compose[@]}" ps
