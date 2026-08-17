@@ -38,7 +38,8 @@
       "@widgets/*": ["./src/widgets/*"],
       "@public/*": ["./public/*"],
       "@shared/*": ["./src/shared/*"],
-      "@remnawave/backend-contract": ["../backend/libs/contract/index.ts"]
+      "@remnawave/backend-contract": ["../backend/libs/contract/index.ts"],
+      "zod": ["./node_modules/zod"]
     }
   },
   "include": ["src/**/*", "@types/**/*"],
