@@ -10,7 +10,9 @@ test_root="$(mktemp -d)"
 trap 'rm -rf -- "${test_root}"' EXIT
 
 generated_env="${test_root}/generated.env"
-generate_secret_env "${generated_env}" 'panel.example.com' '3010'
+printf '%s\n' 'APP_PORT=3000' >"${generated_env}"
+chmod 0600 "${generated_env}"
+ensure_machine_control_env "${generated_env}" 'panel.example.com' '3010'
 grep -Fqx \
     'MACHINE_CONTROL_PUBLIC_URL=wss://panel.example.com:3010/api/machine-control' \
     "${generated_env}"
