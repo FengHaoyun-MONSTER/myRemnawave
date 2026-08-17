@@ -31,9 +31,14 @@ jobs:
           esac
           test "${SSH_PORT}" -ge 1
           test "${SSH_PORT}" -le 65535
-          fingerprint="$(printf '%s' "${SSH_HOST_KEY_SHA256}" | tr -d '\r\n')"
-          fingerprint="${fingerprint#SHA256:}"
-          if [[ ! "${fingerprint}" =~ ^[A-Za-z0-9+/]{43}=?$ ]]; then
+          fingerprint_input="$(printf '%s' "${SSH_HOST_KEY_SHA256}" | tr '\r\n' '  ')"
+          if [[ "${fingerprint_input}" =~ (SHA256:[A-Za-z0-9+/]{43}={0,1}) ]]; then
+            fingerprint="${BASH_REMATCH[1]}"
+          else
+            fingerprint="$(printf '%s' "${fingerprint_input}" | tr -d '[:space:]')"
+            fingerprint="SHA256:${fingerprint}"
+          fi
+          if [[ ! "${fingerprint}" =~ ^SHA256:[A-Za-z0-9+/]{43}=?$ ]]; then
             echo 'SSH host key fingerprint has an invalid SHA-256 format' >&2
             exit 1
           fi
@@ -75,8 +80,13 @@ jobs:
           done
           test -s "${scanned}"
           actual="$(ssh-keygen -lf "${scanned}" -E sha256 | awk '{ print $2 }' | sort -u)"
-          expected="$(printf '%s' "${SSH_HOST_KEY_SHA256}" | tr -d '\r\n')"
-          expected="SHA256:${expected#SHA256:}"
+          expected_input="$(printf '%s' "${SSH_HOST_KEY_SHA256}" | tr '\r\n' '  ')"
+          if [[ "${expected_input}" =~ (SHA256:[A-Za-z0-9+/]{43}={0,1}) ]]; then
+            expected="${BASH_REMATCH[1]}"
+          else
+            expected="$(printf '%s' "${expected_input}" | tr -d '[:space:]')"
+            expected="SHA256:${expected}"
+          fi
           test "$(printf '%s\n' "${actual}" | sed '/^$/d' | wc -l)" -eq 1
           if [ "${actual}" != "${expected}" ]; then
             echo 'SSH host key fingerprint mismatch' >&2
