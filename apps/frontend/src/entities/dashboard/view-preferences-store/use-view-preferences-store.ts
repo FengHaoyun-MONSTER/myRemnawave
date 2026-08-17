@@ -16,7 +16,7 @@ const initialState: IState = {
     configProfilesViewMode: CONFIG_PROFILES_VIEW_MODE.PROFILES,
     hostsViewMode: HOSTS_VIEW_MODE.CARDS,
     hostsActiveTag: null,
-    layoutStyle: LAYOUT_STYLE.COMPACT
+    layoutStyle: LAYOUT_STYLE.SIDEBAR
 }
 
 export const useViewPreferencesStore = create<IActions & IState>()(
@@ -44,7 +44,7 @@ export const useViewPreferencesStore = create<IActions & IState>()(
         ),
         {
             name: 'viewPreferencesStore',
-            version: 1,
+            version: 2,
             storage: createJSONStorage(() => localStorage),
             partialize: (state) => ({
                 nodesViewMode: state.nodesViewMode,
@@ -54,7 +54,17 @@ export const useViewPreferencesStore = create<IActions & IState>()(
                 hostsActiveTag: state.hostsActiveTag,
                 layoutStyle: state.layoutStyle
             }),
-            migrate: () => initialState
+            migrate: (persistedState, version) => {
+                if (version === 1 && persistedState && typeof persistedState === 'object') {
+                    return {
+                        ...initialState,
+                        ...persistedState,
+                        layoutStyle: LAYOUT_STYLE.SIDEBAR
+                    }
+                }
+
+                return initialState
+            }
         }
     )
 )
