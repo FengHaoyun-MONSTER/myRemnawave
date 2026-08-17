@@ -55,6 +55,10 @@ it is not a fully air-gapped installation mode.
   production images and the Dockerfile frontend remain pinned by SHA-256 digest.
 - Secrets are generated on the server with mode `0600`; they are not returned to
   GitHub Actions or stored in the repository.
+- Before replacing an existing panel, the deployment saves its runtime files and
+  database. If Compose startup, container health, Caddy, or the local HTTPS smoke
+  test fails, it prints bounded container logs and restores the previous runtime
+  files and image. The additive database migration is intentionally left in place.
 - PostgreSQL, Valkey, and the panel API have no host-published ports. Caddy
   publishes HTTP/HTTPS, and the panel publishes only the dedicated TCP 3010
   Machine Agent listener.

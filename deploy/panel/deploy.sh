@@ -294,6 +294,58 @@ EOF
     local compose=(docker compose --project-name myremnawave --env-file "${deploy_root}/.env" --env-file "${deploy_root}/.deployment.env" --file "${deploy_root}/compose.yml")
     "${compose[@]}" config --quiet
 
+    rollback_runtime() {
+        if [ -z "${previous_release}" ]; then
+            log 'No previous release is available for automatic rollback.'
+            return 1
+        fi
+        for file in .env compose.yml Caddyfile .deployment.env; do
+            if [ ! -f "${backup_dir}/${file}" ]; then
+                log "Automatic rollback is missing the backed-up ${file}."
+                return 1
+            fi
+            cp -a "${backup_dir}/${file}" "${deploy_root}/${file}.rollback"
+            mv -f "${deploy_root}/${file}.rollback" "${deploy_root}/${file}"
+        done
+
+        # Releases before the integrated Machine control listener reject a URL
+        # unless legacy certificate paths are also present. Remove only the two
+        # variables introduced by this deployment when rolling back to one of them.
+        if ! grep -q 'MACHINE_CONTROL_PUBLIC_URL=' "${previous_release}/deploy/panel/deploy.sh"; then
+            sed -i \
+                -e '/^MACHINE_CONTROL_PUBLIC_URL=/d' \
+                -e '/^MACHINE_CONTROL_PORT=/d' \
+                "${deploy_root}/.env"
+        fi
+        chmod 0600 "${deploy_root}/.env" "${deploy_root}/.deployment.env"
+
+        local rollback_compose=(docker compose --project-name myremnawave --env-file "${deploy_root}/.env" --env-file "${deploy_root}/.deployment.env" --file "${deploy_root}/compose.yml")
+        log "Restoring previous release ${previous_release}."
+        if ! "${rollback_compose[@]}" config --quiet \
+            || ! "${rollback_compose[@]}" up --detach --remove-orphans; then
+            "${rollback_compose[@]}" ps >&2 || true
+            "${rollback_compose[@]}" logs --tail 150 panel >&2 || true
+            return 1
+        fi
+        if ! wait_for_service myremnawave-panel healthy 48 \
+            || ! wait_for_service myremnawave-caddy running 24; then
+            "${rollback_compose[@]}" ps >&2 || true
+            "${rollback_compose[@]}" logs --tail 150 panel caddy >&2 || true
+            return 1
+        fi
+        log 'Previous panel release is healthy after automatic rollback.'
+    }
+
+    fail_after_start() {
+        local reason="$1"
+        "${compose[@]}" ps >&2 || true
+        "${compose[@]}" logs --tail 150 panel caddy >&2 || true
+        if rollback_runtime; then
+            die "${reason} The previous release was restored successfully. Failure artifacts remain in ${backup_dir}."
+        fi
+        die "${reason} Automatic rollback also failed. Failure artifacts remain in ${backup_dir}."
+    }
+
     if [ -n "${previous_release}" ]; then
         log 'Creating a pre-deployment database backup.'
         if "${compose[@]}" ps --status running database --quiet | grep -q .; then
@@ -315,21 +367,19 @@ EOF
 
     if [ "${runtime_files_unchanged}" = 'yes' ] && [ "${supporting_services_running}" = 'yes' ]; then
         log 'Updating only the panel container; database, cache, and HTTPS proxy remain running.'
-        "${compose[@]}" up --detach --no-deps panel
+        "${compose[@]}" up --detach --no-deps panel \
+            || fail_after_start 'Panel container update failed.'
     else
         log 'Starting the database, cache, panel, and HTTPS proxy.'
-        "${compose[@]}" up --detach --remove-orphans
+        "${compose[@]}" up --detach --remove-orphans \
+            || fail_after_start 'Compose startup failed.'
     fi
 
     if ! wait_for_service myremnawave-panel healthy 48; then
-        "${compose[@]}" ps
-        "${compose[@]}" logs --tail 150 panel >&2 || true
-        die "Panel failed its health check. Deployment files and any database backup are in ${backup_dir}."
+        fail_after_start 'Panel failed its health check.'
     fi
     if ! wait_for_service myremnawave-caddy running 24; then
-        "${compose[@]}" ps
-        "${compose[@]}" logs --tail 150 caddy >&2 || true
-        die "Caddy did not start. Deployment files are in ${backup_dir}."
+        fail_after_start 'Caddy did not start.'
     fi
 
     log 'Waiting for Caddy to obtain and serve the public TLS certificate.'
@@ -345,8 +395,7 @@ EOF
         sleep 5
     done
     if [ "${https_ready}" != 'yes' ]; then
-        "${compose[@]}" logs --tail 150 caddy >&2 || true
-        die "HTTPS smoke test failed. Deployment files are in ${backup_dir}."
+        fail_after_start 'HTTPS smoke test failed.'
     fi
 
     local next_link="${deploy_root}/.current-${source_commit}"
