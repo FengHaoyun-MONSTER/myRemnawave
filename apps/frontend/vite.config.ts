@@ -1,4 +1,5 @@
 import react from '@vitejs/plugin-react'
+import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 // import { splashScreen } from 'vite-plugin-splash-screen'
 // import { visualizer } from 'rollup-plugin-visualizer'
@@ -126,5 +127,10 @@ export default defineConfig({
             overlay: false
         }
     },
-    resolve: { tsconfigPaths: true }
+    resolve: {
+        tsconfigPaths: true,
+        alias: {
+            zod: fileURLToPath(new URL('./node_modules/zod/index.js', import.meta.url))
+        }
+    }
 })
