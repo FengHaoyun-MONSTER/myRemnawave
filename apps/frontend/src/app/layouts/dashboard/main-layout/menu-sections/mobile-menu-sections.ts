@@ -81,12 +81,6 @@ export const useMobileMenuSections = (): MenuItem[] => {
                     id: 'hosts'
                 },
                 {
-                    name: 'Machines',
-                    href: ROUTES.DASHBOARD.MANAGEMENT.MACHINES,
-                    icon: HiServer,
-                    id: 'machines'
-                },
-                {
                     name: t('constants.nodes'),
                     href: ROUTES.DASHBOARD.MANAGEMENT.NODES,
                     icon: PiCpu,
@@ -97,6 +91,12 @@ export const useMobileMenuSections = (): MenuItem[] => {
                             href: ROUTES.DASHBOARD.MANAGEMENT.NODES,
                             icon: HiServer,
                             id: 'management'
+                        },
+                        {
+                            name: 'Machines',
+                            href: ROUTES.DASHBOARD.MANAGEMENT.MACHINES,
+                            icon: HiServer,
+                            id: 'machines'
                         },
                         {
                             name: `${t('constants.node-plugins')} β`,
