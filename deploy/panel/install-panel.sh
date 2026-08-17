@@ -5,6 +5,7 @@ set -eu
 repository='FengHaoyun-MONSTER/myRemnawave'
 release_version=''
 panel_domain=''
+machine_control_public_port='3010'
 asset_dir=''
 deploy_root='/opt/myremnawave-panel'
 
@@ -20,11 +21,13 @@ die() {
 usage() {
     cat >&2 <<'EOF'
 Usage:
-  install-panel.sh --domain panel.example.com --version panel-vX.Y.Z
+  install-panel.sh --domain panel.example.com --version panel-vX.Y.Z [OPTIONS]
 
 Options:
   --domain DOMAIN       Public panel domain with an A record for this server.
   --version VERSION     Exact panel-vX.Y.Z GitHub release to install.
+  --machine-control-public-port PORT
+                        Public Agent control port (default: 3010).
   --asset-dir PATH      Use pre-downloaded release assets from PATH.
   --help                Show this help text.
 EOF
@@ -81,6 +84,8 @@ check_fresh_install() {
             || die 'A failed installation for another panel domain already exists.'
         grep -Fqx "PANEL_VERSION=${release_version}" "${install_intent}" \
             || die 'A failed installation for another panel version already exists.'
+        grep -Fqx "MACHINE_CONTROL_PUBLIC_PORT=${machine_control_public_port}" "${install_intent}" \
+            || die 'A failed installation for another machine-control public port already exists.'
         log 'Resuming the matching incomplete installation.'
         return 0
     fi
@@ -131,6 +136,11 @@ while [ "$#" -gt 0 ]; do
             asset_dir="$2"
             shift 2
             ;;
+        --machine-control-public-port)
+            [ "$#" -ge 2 ] || { usage; exit 2; }
+            machine_control_public_port="$2"
+            shift 2
+            ;;
         --help)
             usage
             exit 0
@@ -148,6 +158,16 @@ printf '%s' "${panel_domain}" \
     || die 'A valid public panel domain is required.'
 printf '%s' "${release_version}" | grep -Eq '^panel-v[0-9]+\.[0-9]+\.[0-9]+$' \
     || die 'The version must be an exact panel-vX.Y.Z release.'
+case "${machine_control_public_port}" in
+    ''|*[!0-9]*) die 'Machine-control public port must be numeric.' ;;
+esac
+[ "${machine_control_public_port}" -ge 1 ] && [ "${machine_control_public_port}" -le 65535 ] \
+    || die 'Machine-control public port must be between 1 and 65535.'
+case "${machine_control_public_port}" in
+    80|443|3000|3001|5432|6379)
+        die "Machine-control public port ${machine_control_public_port} conflicts with a reserved panel port."
+        ;;
+esac
 
 # shellcheck source=/dev/null
 . /etc/os-release
@@ -184,7 +204,7 @@ if [ "${is_resume}" = 'no' ]; then
     check_port_available tcp 80
     check_port_available tcp 443
     check_port_available udp 443
-    check_port_available tcp 3010
+    check_port_available tcp "${machine_control_public_port}"
 
     dns_ipv4="$(getent ahostsv4 "${panel_domain}" | awk '{ print $1 }' | sort -u)"
     [ -n "${dns_ipv4}" ] || die 'The panel domain has no IPv4 DNS result.'
@@ -198,6 +218,7 @@ if [ "${is_resume}" = 'no' ]; then
     cat >"${deploy_root}/.install-intent" <<EOF
 PANEL_DOMAIN=${panel_domain}
 PANEL_VERSION=${release_version}
+MACHINE_CONTROL_PUBLIC_PORT=${machine_control_public_port}
 EOF
 fi
 
@@ -260,7 +281,8 @@ bash "${release_dir}/deploy/panel/deploy.sh" \
     "${panel_domain}" \
     "${source_commit}" \
     "${work_dir}/${image_asset}" \
-    "${image_sha256}"
+    "${image_sha256}" \
+    "${machine_control_public_port}"
 
 rm -f -- "${deploy_root}/.install-intent"
 log "Installation completed: https://${panel_domain}"

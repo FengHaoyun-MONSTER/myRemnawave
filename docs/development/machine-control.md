@@ -24,6 +24,12 @@ MACHINE_CONTROL_PUBLIC_URL=wss://panel.example.com:3010/api/machine-control
 MACHINE_CONTROL_PORT=3010
 ```
 
+`MACHINE_CONTROL_PORT` is the container-local backend listener. The managed
+panel deployment publishes it through `MACHINE_CONTROL_PUBLIC_PORT`, which
+defaults to 3010 but may differ on constrained test providers. The public URL
+must contain the published port. Changing only the published port does not
+weaken or terminate mTLS at a proxy.
+
 By default, the backend creates an ephemeral server certificate signed by the
 panel Machine CA with the public URL hostname as a DNS/IP SAN. It is regenerated
 on backend start and never written to disk. An externally managed certificate

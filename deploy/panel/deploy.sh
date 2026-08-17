@@ -131,8 +131,34 @@ EOF
     rm -f "${mirror_tmp}"
 }
 
+validate_machine_control_public_port() {
+    local port="$1"
+
+    [[ "${port}" =~ ^[0-9]+$ ]] \
+        || die 'Machine-control public port must be numeric.'
+    [ "${port}" -ge 1 ] && [ "${port}" -le 65535 ] \
+        || die 'Machine-control public port must be between 1 and 65535.'
+    case "${port}" in
+        80|443|3000|3001|5432|6379)
+            die "Machine-control public port ${port} conflicts with a reserved panel port."
+            ;;
+    esac
+}
+
+replace_env_value() {
+    local target="$1" key="$2" value="$3"
+    local next="${target}.next"
+
+    awk -v key="${key}" -v value="${value}" '
+        index($0, key "=") == 1 { print key "=" value; next }
+        { print }
+    ' "${target}" >"${next}"
+    chmod 0600 "${next}"
+    mv -f "${next}" "${target}"
+}
+
 generate_secret_env() {
-    local target="$1" domain="$2"
+    local target="$1" domain="$2" public_port="$3"
     local app_secret database_password metrics_password
 
     umask 077
@@ -153,7 +179,7 @@ JWT_AUTH_LIFETIME=12
 IS_TELEGRAM_NOTIFICATIONS_ENABLED=false
 PANEL_DOMAIN=${domain}
 FRONT_END_DOMAIN=https://${domain}
-MACHINE_CONTROL_PUBLIC_URL=wss://${domain}:3010/api/machine-control
+MACHINE_CONTROL_PUBLIC_URL=wss://${domain}:${public_port}/api/machine-control
 MACHINE_CONTROL_PORT=3010
 SUB_PUBLIC_DOMAIN=${domain}/api/sub
 METRICS_USER=metrics
@@ -167,19 +193,38 @@ EOF
 }
 
 ensure_machine_control_env() {
-    local target="$1" domain="$2"
-    local expected_url="MACHINE_CONTROL_PUBLIC_URL=wss://${domain}:3010/api/machine-control"
+    local target="$1" domain="$2" public_port="$3"
+    local expected_url="wss://${domain}:${public_port}/api/machine-control"
     local expected_port='MACHINE_CONTROL_PORT=3010'
+    local url_count current_url current_public_port
 
-    if grep -q '^MACHINE_CONTROL_PUBLIC_URL=' "${target}"; then
-        grep -Fqx "${expected_url}" "${target}" \
-            || die 'Existing machine-control URL does not match the panel domain and TCP 3010.'
+    url_count="$(grep -c '^MACHINE_CONTROL_PUBLIC_URL=' "${target}" || true)"
+    [ "${url_count}" -le 1 ] \
+        || die 'Existing panel environment contains duplicate machine-control URLs.'
+    if [ "${url_count}" -eq 1 ]; then
+        current_url="$(sed -n 's/^MACHINE_CONTROL_PUBLIC_URL=//p' "${target}")"
+        if [ "${current_url}" != "${expected_url}" ]; then
+            case "${current_url}" in
+                "wss://${domain}:"*'/api/machine-control')
+                    current_public_port="${current_url#"wss://${domain}:"}"
+                    current_public_port="${current_public_port%/api/machine-control}"
+                    validate_machine_control_public_port "${current_public_port}"
+                    replace_env_value \
+                        "${target}" 'MACHINE_CONTROL_PUBLIC_URL' "${expected_url}"
+                    ;;
+                *)
+                    die 'Existing machine-control URL is not managed by this panel deployment.'
+                    ;;
+            esac
+        fi
     else
-        printf '%s\n' "${expected_url}" >>"${target}"
+        printf 'MACHINE_CONTROL_PUBLIC_URL=%s\n' "${expected_url}" >>"${target}"
     fi
-    if grep -q '^MACHINE_CONTROL_PORT=' "${target}"; then
+    if [ "$(grep -c '^MACHINE_CONTROL_PORT=' "${target}" || true)" -gt 1 ]; then
+        die 'Existing panel environment contains duplicate machine-control ports.'
+    elif grep -q '^MACHINE_CONTROL_PORT=' "${target}"; then
         grep -Fqx "${expected_port}" "${target}" \
-            || die 'Existing machine-control port is not TCP 3010.'
+            || die 'Existing internal machine-control port is not TCP 3010.'
     else
         printf '%s\n' "${expected_port}" >>"${target}"
     fi
@@ -187,7 +232,7 @@ ensure_machine_control_env() {
 }
 
 write_deployment_env() {
-    local target="$1" deploy_root="$2" panel_domain="$3" image_commit="$4"
+    local target="$1" deploy_root="$2" panel_domain="$3" image_commit="$4" public_port="$5"
     local next="${target}.next"
 
     [[ "${image_commit}" =~ ^[0-9a-f]{40}$ ]] || die 'Panel image commit must be a full Git SHA.'
@@ -195,6 +240,7 @@ write_deployment_env() {
 DEPLOY_ROOT=${deploy_root}
 PANEL_DOMAIN=${panel_domain}
 PANEL_IMAGE_TAG=${image_commit}
+MACHINE_CONTROL_PUBLIC_PORT=${public_port}
 EOF
     chmod 0600 "${next}"
     mv -f "${next}" "${target}"
@@ -202,7 +248,7 @@ EOF
 
 prepare_rollback_configuration() {
     local env_file="$1" deployment_env="$2" previous_release="$3"
-    local deploy_root="$4" panel_domain="$5" previous_commit
+    local deploy_root="$4" panel_domain="$5" previous_commit previous_public_port
 
     [ -f "${previous_release}/.source-commit" ] \
         || die 'Previous release provenance marker is missing.'
@@ -222,8 +268,15 @@ prepare_rollback_configuration() {
 
     # Never trust a restored runtime image tag: it may have been left behind by
     # an earlier failed deployment. The immutable release marker is authoritative.
+    previous_public_port="$(awk -F= '
+        $1 == "MACHINE_CONTROL_PUBLIC_PORT" { count++; value=$2 }
+        END { if (count == 1) print value }
+    ' "${deployment_env}")"
+    previous_public_port="${previous_public_port:-3010}"
+    validate_machine_control_public_port "${previous_public_port}"
     write_deployment_env \
-        "${deployment_env}" "${deploy_root}" "${panel_domain}" "${previous_commit}"
+        "${deployment_env}" "${deploy_root}" "${panel_domain}" \
+        "${previous_commit}" "${previous_public_port}"
 }
 
 wait_for_service() {
@@ -244,17 +297,19 @@ wait_for_service() {
 }
 
 main() {
-    [ "$#" -eq 5 ] \
-        || die 'Usage: deploy.sh RELEASE_DIRECTORY PANEL_DOMAIN SOURCE_COMMIT IMAGE_ARCHIVE IMAGE_SHA256'
+    [ "$#" -ge 5 ] && [ "$#" -le 6 ] \
+        || die 'Usage: deploy.sh RELEASE_DIRECTORY PANEL_DOMAIN SOURCE_COMMIT IMAGE_ARCHIVE IMAGE_SHA256 [MACHINE_CONTROL_PUBLIC_PORT]'
     [ "$(id -u)" -eq 0 ] || die 'Deployment must run as root.'
 
     local release_dir="$1" panel_domain="$2" source_commit="$3"
     local image_archive="$4" expected_image_sha256="$5"
+    local machine_control_public_port="${6:-3010}"
     local deploy_root="${MYREMNAWAVE_DEPLOY_ROOT:-${DEFAULT_DEPLOY_ROOT}}"
     [[ "${panel_domain}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]] \
         || die 'Panel domain is invalid.'
     [[ "${source_commit}" =~ ^[0-9a-f]{40}$ ]] || die 'Source commit must be a full Git SHA.'
     [[ "${expected_image_sha256}" =~ ^[0-9a-f]{64}$ ]] || die 'Image checksum must be SHA-256.'
+    validate_machine_control_public_port "${machine_control_public_port}"
     [ -f "${image_archive}" ] || die 'Panel image archive is missing.'
     [ -f "${release_dir}/deploy/panel/Dockerfile" ] || die 'Release does not contain the panel Dockerfile.'
     [ -f "${release_dir}/.source-commit" ] || die 'Release provenance marker is missing.'
@@ -275,11 +330,11 @@ main() {
     require_command sha256sum
     require_command ss
 
-    if ss -ltnH 'sport = :3010' 2>/dev/null | grep -q .; then
+    if ss -ltnH "sport = :${machine_control_public_port}" 2>/dev/null | grep -q .; then
         local control_owner
-        control_owner="$(docker ps --filter publish=3010 --format '{{.Names}}' | sort -u)"
+        control_owner="$(docker ps --filter publish="${machine_control_public_port}" --format '{{.Names}}' | sort -u)"
         [ "${control_owner}" = 'myremnawave-panel' ] \
-            || die 'TCP 3010 is already occupied by a process outside the managed panel.'
+            || die "TCP ${machine_control_public_port} is already occupied by a process outside the managed panel."
     fi
 
     printf '%s  %s\n' "${expected_image_sha256}" "${image_archive}" \
@@ -298,7 +353,8 @@ main() {
 
     if [ ! -f "${deploy_root}/.env" ]; then
         log 'Generating persistent panel and database secrets.'
-        generate_secret_env "${deploy_root}/.env" "${panel_domain}"
+        generate_secret_env \
+            "${deploy_root}/.env" "${panel_domain}" "${machine_control_public_port}"
     else
         chmod 0600 "${deploy_root}/.env"
         grep -Fqx "PANEL_DOMAIN=${panel_domain}" "${deploy_root}/.env" \
@@ -316,7 +372,8 @@ main() {
             cp -a "${deploy_root}/${file}" "${backup_dir}/${file}"
         fi
     done
-    ensure_machine_control_env "${deploy_root}/.env" "${panel_domain}"
+    ensure_machine_control_env \
+        "${deploy_root}/.env" "${panel_domain}" "${machine_control_public_port}"
 
     if [ -n "${previous_release}" ] \
         && [ -f "${backup_dir}/compose.yml" ] \
@@ -331,7 +388,8 @@ main() {
     mv -f "${deploy_root}/compose.yml.next" "${deploy_root}/compose.yml"
     mv -f "${deploy_root}/Caddyfile.next" "${deploy_root}/Caddyfile"
     write_deployment_env \
-        "${deploy_root}/.deployment.env" "${deploy_root}" "${panel_domain}" "${source_commit}"
+        "${deploy_root}/.deployment.env" "${deploy_root}" "${panel_domain}" \
+        "${source_commit}" "${machine_control_public_port}"
 
     local compose=(docker compose --project-name myremnawave --env-file "${deploy_root}/.env" --env-file "${deploy_root}/.deployment.env" --file "${deploy_root}/compose.yml")
     "${compose[@]}" config --quiet

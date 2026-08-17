@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 10
     env:
       PANEL_DOMAIN: upcloudfreetier.thinderbox.com
+      MACHINE_CONTROL_PUBLIC_PORT: '3389'
       SSH_HOST: ${{ secrets.DEV_SERVICE_IP }}
       SSH_PORT: ${{ secrets.DEV_SERVICE_SSH_PORT }}
       SSH_USER: ${{ secrets.DEV_SERVICE_SSH_USER }}
@@ -26,6 +27,9 @@ jobs:
           test -n "${SSH_USER}"
           test -n "${SSH_PRIVATE_KEY}"
           test -n "${SSH_HOST_KEY_SHA256}"
+          [[ "${MACHINE_CONTROL_PUBLIC_PORT}" =~ ^[0-9]+$ ]]
+          test "${MACHINE_CONTROL_PUBLIC_PORT}" -ge 1
+          test "${MACHINE_CONTROL_PUBLIC_PORT}" -le 65535
           case "${SSH_PORT}" in
             ''|*[!0-9]*) echo 'SSH port must be numeric' >&2; exit 1 ;;
           esac
@@ -111,8 +115,10 @@ jobs:
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
-            "${SSH_USER}@${SSH_HOST}" 'sh -s' <<'REMOTE'
+            "${SSH_USER}@${SSH_HOST}" \
+            "sh -s -- '${MACHINE_CONTROL_PUBLIC_PORT}'" <<'REMOTE'
           set -eu
+          machine_control_public_port="$1"
           echo "REMOTE_UID=$(id -u)"
           echo "REMOTE_ARCH=$(uname -m)"
           if [ -r /etc/os-release ]; then
@@ -147,7 +153,7 @@ jobs:
             fi
           done
           if command -v ss >/dev/null 2>&1; then
-            for port in 80 443 3000 3001 5432 6379; do
+            for port in 80 443 3000 3001 5432 6379 "${machine_control_public_port}"; do
               if ss -ltnH "sport = :${port}" 2>/dev/null | grep -q .; then
                 echo "TCP_PORT_${port}=in-use"
               else

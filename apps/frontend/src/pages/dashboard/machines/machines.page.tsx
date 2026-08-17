@@ -305,7 +305,8 @@ export function MachinesPage() {
             {!controlReady && (
                 <Alert color="red" mb="md" title="Machine control plane unavailable">
                     Machine enrollment is disabled until the mTLS control listener is configured and
-                    ready. Check the panel deployment and TCP port 3010 before creating a machine.
+                    ready. Check the panel deployment and its configured machine-control TCP port
+                    before creating a machine.
                 </Alert>
             )}
 

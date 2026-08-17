@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 60
     env:
       PANEL_DOMAIN: upcloudfreetier.thinderbox.com
+      MACHINE_CONTROL_PUBLIC_PORT: '3389'
       SSH_HOST: ${{ secrets.DEV_SERVICE_IP }}
       SSH_PORT: ${{ secrets.DEV_SERVICE_SSH_PORT }}
       SSH_USER: ${{ secrets.DEV_SERVICE_SSH_USER }}
@@ -44,6 +45,9 @@ jobs:
           test -n "${SSH_USER}"
           test -n "${SSH_PRIVATE_KEY}"
           test -n "${SSH_HOST_KEY_SHA256}"
+          [[ "${MACHINE_CONTROL_PUBLIC_PORT}" =~ ^[0-9]+$ ]]
+          test "${MACHINE_CONTROL_PUBLIC_PORT}" -ge 1
+          test "${MACHINE_CONTROL_PUBLIC_PORT}" -le 65535
           case "${SSH_PORT}" in
             ''|*[!0-9]*) echo 'SSH port must be numeric' >&2; exit 1 ;;
           esac
@@ -196,7 +200,7 @@ jobs:
             -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \
             "${IMAGE_ARCHIVE}" "${remote}:${remote_staging}/panel-image.tar.gz"
 
-          remote_command="bash -s -- '${remote_staging}' '${GITHUB_SHA}' '${SOURCE_SHA256}' '${IMAGE_SHA256}' '${PANEL_DOMAIN}'"
+          remote_command="bash -s -- '${remote_staging}' '${GITHUB_SHA}' '${SOURCE_SHA256}' '${IMAGE_SHA256}' '${PANEL_DOMAIN}' '${MACHINE_CONTROL_PUBLIC_PORT}'"
           # remote_command contains only validated runner values.
           # shellcheck disable=SC2029
           ssh "${ssh_options[@]}" "${remote}" "${remote_command}" <<'REMOTE'
@@ -207,16 +211,20 @@ jobs:
             exit 1
           }
 
-          [ "$#" -eq 5 ] || die 'Invalid remote deployment arguments.'
+          [ "$#" -eq 6 ] || die 'Invalid remote deployment arguments.'
           staging="$1"
           source_commit="$2"
           expected_source_sha256="$3"
           expected_image_sha256="$4"
           panel_domain="$5"
+          machine_control_public_port="$6"
           [[ "${staging}" =~ ^/tmp/myremnawave-deploy-[0-9]+-[0-9]+$ ]] || die 'Invalid staging path.'
           [[ "${source_commit}" =~ ^[0-9a-f]{40}$ ]] || die 'Invalid source commit.'
           [[ "${expected_source_sha256}" =~ ^[0-9a-f]{64}$ ]] || die 'Invalid source checksum.'
           [[ "${expected_image_sha256}" =~ ^[0-9a-f]{64}$ ]] || die 'Invalid image checksum.'
+          [[ "${machine_control_public_port}" =~ ^[0-9]+$ ]] || die 'Invalid machine-control public port.'
+          [ "${machine_control_public_port}" -ge 1 ] && [ "${machine_control_public_port}" -le 65535 ] \
+            || die 'Invalid machine-control public port.'
           [ -f "${staging}/source.tar.gz" ] || die 'Source archive is missing.'
           [ -f "${staging}/panel-image.tar.gz" ] || die 'Panel image archive is missing.'
           printf '%s  %s\n' "${expected_source_sha256}" "${staging}/source.tar.gz" | sha256sum --check --status
@@ -254,7 +262,8 @@ jobs:
             "${panel_domain}" \
             "${source_commit}" \
             "${staging}/panel-image.tar.gz" \
-            "${expected_image_sha256}"
+            "${expected_image_sha256}" \
+            "${machine_control_public_port}"
           REMOTE
 
       - name: Verify the public panel and deployed revision
@@ -269,10 +278,11 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \
             "${SSH_USER}@${SSH_HOST}" \
-            "bash -s -- '${GITHUB_SHA}' '${PANEL_DOMAIN}'" <<'REMOTE'
+            "bash -s -- '${GITHUB_SHA}' '${PANEL_DOMAIN}' '${MACHINE_CONTROL_PUBLIC_PORT}'" <<'REMOTE'
           set -euo pipefail
           expected_commit="$1"
           panel_domain="$2"
+          machine_control_public_port="$3"
           actual_commit="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' myremnawave-panel)"
           [ "${actual_commit}" = "${expected_commit}" ]
           [ "$(docker inspect --format '{{.State.Health.Status}}' myremnawave-panel)" = 'healthy' ]
@@ -287,9 +297,9 @@ jobs:
               exit 1
             fi
           done
-          ss -ltnH 'sport = :3010' | grep -q .
+          ss -ltnH "sport = :${machine_control_public_port}" | grep -q .
           if curl --silent --show-error --max-time 10 \
-            --output /dev/null "https://${panel_domain}:3010/api/machine-control"; then
+            --output /dev/null "https://${panel_domain}:${machine_control_public_port}/api/machine-control"; then
             echo 'Machine control unexpectedly accepted a client without an mTLS certificate' >&2
             exit 1
           fi
@@ -350,11 +360,11 @@ jobs:
           control_log="$(mktemp)"
           trap 'rm -f "${headers}" "${body}" "${control_cert}" "${control_log}"' EXIT
           if ! timeout 15 openssl s_client \
-            -connect "${PANEL_DOMAIN}:3010" \
+            -connect "${PANEL_DOMAIN}:${MACHINE_CONTROL_PUBLIC_PORT}" \
             -servername "${PANEL_DOMAIN}" \
             -tls1_3 -showcerts </dev/null >"${control_log}" 2>&1; then
             grep -q -- '-----BEGIN CERTIFICATE-----' "${control_log}" || {
-              echo 'Public TCP 3010 did not present a TLS certificate.' >&2
+              echo "Public TCP ${MACHINE_CONTROL_PUBLIC_PORT} did not present a TLS certificate." >&2
               cat "${control_log}" >&2
               exit 1
             }
@@ -363,8 +373,8 @@ jobs:
             "${control_log}" | sed -n '1,/-----END CERTIFICATE-----/p' >"${control_cert}"
           openssl x509 -in "${control_cert}" -noout -checkhost "${PANEL_DOMAIN}"
           if curl --insecure --silent --show-error --max-time 15 \
-            --output /dev/null "https://${PANEL_DOMAIN}:3010/api/machine-control"; then
-            echo 'Public TCP 3010 accepted a client without a Machine certificate.' >&2
+            --output /dev/null "https://${PANEL_DOMAIN}:${MACHINE_CONTROL_PUBLIC_PORT}/api/machine-control"; then
+            echo "Public TCP ${MACHINE_CONTROL_PUBLIC_PORT} accepted a client without a Machine certificate." >&2
             exit 1
           fi
 
@@ -373,5 +383,5 @@ jobs:
             echo
             echo "- Source commit: \`${GITHUB_SHA}\`"
             echo "- URL: https://${PANEL_DOMAIN}"
-            echo '- HTTPS, security headers, container health, image provenance, private service ports, and TCP 3010 mTLS rejection: PASS'
+            echo "- HTTPS, security headers, container health, image provenance, private service ports, and TCP ${MACHINE_CONTROL_PUBLIC_PORT} mTLS rejection: PASS"
           } >>"${GITHUB_STEP_SUMMARY}"

@@ -25,6 +25,7 @@ cat >"${deploy_root}/.deployment.env" <<'EOF'
 DEPLOY_ROOT=/opt/myremnawave-panel
 PANEL_DOMAIN=panel.example.com
 PANEL_IMAGE_TAG=2222222222222222222222222222222222222222
+MACHINE_CONTROL_PUBLIC_PORT=3389
 EOF
 
 prepare_rollback_configuration \
@@ -43,6 +44,7 @@ grep -Fqx 'DEPLOY_ROOT=/opt/myremnawave-panel' "${deploy_root}/.deployment.env"
 grep -Fqx 'PANEL_DOMAIN=panel.example.com' "${deploy_root}/.deployment.env"
 grep -Fqx 'PANEL_IMAGE_TAG=1111111111111111111111111111111111111111' \
     "${deploy_root}/.deployment.env"
+grep -Fqx 'MACHINE_CONTROL_PUBLIC_PORT=3389' "${deploy_root}/.deployment.env"
 if grep -q '2222222222222222222222222222222222222222' \
     "${deploy_root}/.deployment.env"; then
     printf 'rollback retained the failed deployment image tag\n' >&2

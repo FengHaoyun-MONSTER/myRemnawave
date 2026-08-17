@@ -16,7 +16,7 @@ changed by this release.
 | Agent | race tests, vet, build, vulnerability scan | PASS |
 | Installer | `sh -n`, ShellCheck, Debian 13 container, preflight failure | PASS |
 | Deployment | Compose validation, ShellCheck, actionlint, image build | PASS |
-| Security | secret scan, unauthenticated TCP 3010 rejection | PASS |
+| Security | secret scan, unauthenticated public Machine-control port rejection | PASS |
 
 ## Automated cases
 
@@ -36,13 +36,16 @@ changed by this release.
 | TLS-01 | Listener starts without custom server-cert paths | In-memory CA-signed certificate contains the public hostname/IP SAN |
 | TLS-02 | Client connects without a Machine certificate | TLS handshake is rejected before WebSocket upgrade |
 | TLS-03 | Valid Agent connects with matching UUID/fingerprint | WebSocket session reaches hello/heartbeat and Machine becomes connected |
-| DEP-01 | Existing test panel is upgraded | `.env` is backed up, 3010 config is added once, migration applies, health stays green |
+| DEP-01 | Existing test panel is upgraded | `.env` is backed up, control configuration is added once, migration applies, health stays green |
+| DEP-02 | A validated alternate public control port is selected | Compose publishes that port to container TCP 3010 and enrollment returns the matching public URL |
+| DEP-03 | An invalid, reserved, duplicate, or unmanaged control setting is supplied | Deployment fails closed without overwriting the unknown setting |
 
 ## Test-server acceptance
 
 1. Deploy the reviewed main-branch commit through `Deploy Test Panel`.
 2. Verify HTTPS, deployed revision, database migration, container health, host
-   listener TCP 3010, and rejection of clients without an mTLS certificate.
+   configured public Machine-control listener, and rejection of clients without
+   an mTLS certificate.
 3. Rotate the previously disclosed enrollment token in the UI.
 4. Run the v0.1.2 root command on the Debian test Machine. A previous v0.1.1
    partial install must recover without manual deletion.
