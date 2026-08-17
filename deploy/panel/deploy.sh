@@ -23,6 +23,7 @@ install_docker() {
         return
     fi
 
+    # shellcheck source=/dev/null
     . /etc/os-release
     [ "${ID:-}" = 'ubuntu' ] || die 'Automatic Docker installation only supports Ubuntu.'
     case "${VERSION_ID:-}" in
@@ -31,26 +32,49 @@ install_docker() {
     esac
     [ "$(dpkg --print-architecture)" = 'amd64' ] || die 'This test deployment supports amd64 only.'
 
-    log 'Installing Docker Engine from Docker’s signed Ubuntu repository.'
+    log "Installing Docker Engine from Docker's signed Ubuntu repository."
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install --yes --no-install-recommends ca-certificates curl gnupg
     install -d -m 0755 /etc/apt/keyrings
 
-    local key_tmp source_tmp key_fingerprint
+    local key_tmp source_tmp probe_tmp key_fingerprint repository_base candidate
     key_tmp="$(mktemp)"
     source_tmp="$(mktemp)"
-    trap 'rm -f "${key_tmp:-}" "${source_tmp:-}"' RETURN
+    probe_tmp="$(mktemp)"
+    repository_base=''
+    trap 'rm -f "${key_tmp:-}" "${source_tmp:-}" "${probe_tmp:-}"' RETURN
 
-    curl --fail --show-error --silent --location --retry 3 \
-        https://download.docker.com/linux/ubuntu/gpg -o "${key_tmp}"
-    key_fingerprint="$(gpg --batch --show-keys --with-colons "${key_tmp}" | awk -F: '$1 == "fpr" { print $10; exit }')"
-    [ "${key_fingerprint}" = "${DOCKER_APT_KEY_FINGERPRINT}" ] || die 'Docker APT signing key fingerprint mismatch.'
+    for candidate in \
+        'https://download.docker.com/linux/ubuntu' \
+        'https://mirrors.aliyun.com/docker-ce/linux/ubuntu'; do
+        : >"${key_tmp}"
+        : >"${probe_tmp}"
+        if ! curl --fail --show-error --silent --location \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 15 --max-time 90 \
+            "${candidate}/gpg" -o "${key_tmp}"; then
+            log "Docker repository endpoint is unavailable, trying the next signed mirror."
+            continue
+        fi
+        key_fingerprint="$(gpg --batch --show-keys --with-colons "${key_tmp}" | awk -F: '$1 == "fpr" { print $10; exit }')"
+        [ "${key_fingerprint}" = "${DOCKER_APT_KEY_FINGERPRINT}" ] \
+            || die 'Docker APT signing key fingerprint mismatch.'
+        if curl --fail --show-error --silent --location \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 15 --max-time 90 \
+            "${candidate}/dists/${VERSION_CODENAME}/InRelease" -o "${probe_tmp}"; then
+            repository_base="${candidate}"
+            break
+        fi
+        log "Docker repository metadata is unavailable, trying the next signed mirror."
+    done
+    [ -n "${repository_base}" ] || die 'No verified Docker APT repository is reachable.'
     install -m 0644 "${key_tmp}" /etc/apt/keyrings/docker.asc
 
     cat >"${source_tmp}" <<EOF
 Types: deb
-URIs: https://download.docker.com/linux/ubuntu
+URIs: ${repository_base}
 Suites: ${VERSION_CODENAME}
 Components: stable
 Signed-By: /etc/apt/keyrings/docker.asc
@@ -58,14 +82,15 @@ Architectures: amd64
 EOF
     install -m 0644 "${source_tmp}" /etc/apt/sources.list.d/docker.sources
 
-    apt-get update
-    apt-get install --yes --no-install-recommends \
+    apt-get -o Acquire::Retries=5 -o Acquire::https::Timeout=30 update
+    apt-get -o Acquire::Retries=5 -o Acquire::https::Timeout=30 \
+        install --yes --no-install-recommends \
         docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     systemctl enable --now docker
     docker version >/dev/null
     docker compose version >/dev/null
     trap - RETURN
-    rm -f "${key_tmp}" "${source_tmp}"
+    rm -f "${key_tmp}" "${source_tmp}" "${probe_tmp}"
 }
 
 generate_secret_env() {
@@ -189,6 +214,7 @@ EOF
         log 'Creating a pre-deployment database backup.'
         if "${compose[@]}" ps --status running database --quiet | grep -q .; then
             umask 077
+            # shellcheck disable=SC2016
             "${compose[@]}" exec -T database sh -c \
                 'pg_dump --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --format=custom' \
                 >"${backup_dir}/database.dump"

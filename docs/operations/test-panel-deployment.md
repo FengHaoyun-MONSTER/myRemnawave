@@ -11,7 +11,10 @@ development/test server and must not be reused for production.
 - The scanned Ed25519 SSH host key must match
   `DEV_SERVICE_SSH_HOST_KEY_SHA256` before authentication.
 - The source archive is created from the dispatched Git commit and is verified
-by SHA-256 after upload.
+  by SHA-256 after upload.
+- Docker packages come from the official Docker APT repository or its Aliyun
+  mirror; both paths require the pinned Docker signing-key fingerprint and APT
+  signature verification.
 - Secrets are generated on the server with mode `0600`; they are not returned to
   GitHub Actions or stored in the repository.
 - PostgreSQL, Valkey, and the panel API have no host-published ports. Only Caddy
