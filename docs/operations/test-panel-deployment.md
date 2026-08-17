@@ -10,8 +10,11 @@ development/test server and must not be reused for production.
 - DNS must resolve to the configured SSH host.
 - The scanned Ed25519 SSH host key must match
   `DEV_SERVICE_SSH_HOST_KEY_SHA256` before authentication.
-- The source archive is created from the dispatched Git commit and is verified
-  by SHA-256 after upload.
+- The source archive is created from the dispatched Git commit. The panel image
+  is built on the GitHub-hosted runner from that same checkout, labeled with the
+  full source commit, and exported as a compressed Docker archive. Both archives
+  are independently verified by SHA-256 after upload; the server also verifies
+  the loaded image's revision label before it can start.
 - Docker packages come from the official Docker APT repository or its Aliyun
   mirror; both paths require the pinned Docker signing-key fingerprint and APT
   signature verification.
@@ -39,6 +42,11 @@ The persistent deployment root is `/opt/myremnawave-panel`:
 Application rollback uses the previous source/image and manifests. Database
 migrations are forward operations; restoring a database dump is a separate,
 explicitly destructive recovery action and is never performed automatically.
+
+The server does not compile the application. It only installs Docker when
+needed, loads the CI-built and verified image archive, pulls the digest-pinned
+infrastructure images, and starts the Compose project. A non-blocking deployment
+lock prevents two releases from mutating the panel stack concurrently.
 
 ## Verification
 

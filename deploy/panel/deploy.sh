@@ -175,24 +175,48 @@ wait_for_service() {
 }
 
 main() {
-    [ "$#" -eq 3 ] || die 'Usage: deploy.sh RELEASE_DIRECTORY PANEL_DOMAIN SOURCE_COMMIT'
+    [ "$#" -eq 5 ] \
+        || die 'Usage: deploy.sh RELEASE_DIRECTORY PANEL_DOMAIN SOURCE_COMMIT IMAGE_ARCHIVE IMAGE_SHA256'
     [ "$(id -u)" -eq 0 ] || die 'Deployment must run as root.'
 
     local release_dir="$1" panel_domain="$2" source_commit="$3"
+    local image_archive="$4" expected_image_sha256="$5"
     local deploy_root="${MYREMNAWAVE_DEPLOY_ROOT:-${DEFAULT_DEPLOY_ROOT}}"
     [[ "${panel_domain}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]] \
         || die 'Panel domain is invalid.'
     [[ "${source_commit}" =~ ^[0-9a-f]{40}$ ]] || die 'Source commit must be a full Git SHA.'
+    [[ "${expected_image_sha256}" =~ ^[0-9a-f]{64}$ ]] || die 'Image checksum must be SHA-256.'
+    [ -f "${image_archive}" ] || die 'Panel image archive is missing.'
     [ -f "${release_dir}/deploy/panel/Dockerfile" ] || die 'Release does not contain the panel Dockerfile.'
     [ -f "${release_dir}/.source-commit" ] || die 'Release provenance marker is missing.'
     grep -Fqx "${source_commit}" "${release_dir}/.source-commit" || die 'Release provenance marker mismatch.'
 
+    require_command flock
+
+    install -d -m 0700 "${deploy_root}" "${deploy_root}/releases" "${deploy_root}/backups"
+    exec 9>"${deploy_root}/deploy.lock"
+    flock -n 9 || die 'Another panel deployment is already active.'
+
     install_docker
     configure_docker_registry_mirror
     require_command curl
+    require_command gzip
     require_command openssl
+    require_command sha256sum
 
-    install -d -m 0700 "${deploy_root}" "${deploy_root}/releases" "${deploy_root}/backups"
+    printf '%s  %s\n' "${expected_image_sha256}" "${image_archive}" \
+        | sha256sum --check --status \
+        || die 'Panel image archive checksum mismatch.'
+
+    local image_tag actual_commit
+    image_tag="myremnawave-panel:${source_commit}"
+    log "Loading the verified panel image for source commit ${source_commit}."
+    gzip -dc -- "${image_archive}" | docker load
+    actual_commit="$(docker image inspect \
+        --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+        "${image_tag}" 2>/dev/null || true)"
+    [ "${actual_commit}" = "${source_commit}" ] \
+        || die 'Loaded panel image provenance does not match the source commit.'
 
     if [ ! -f "${deploy_root}/.env" ]; then
         log 'Generating persistent panel and database secrets.'
@@ -202,18 +226,6 @@ main() {
         grep -Fqx "PANEL_DOMAIN=${panel_domain}" "${deploy_root}/.env" \
             || die 'Existing deployment is configured for another panel domain.'
     fi
-
-    local build_time image_tag
-    build_time="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-    image_tag="myremnawave-panel:${source_commit}"
-    log "Building panel image from source commit ${source_commit}."
-    docker build --pull \
-        --file "${release_dir}/deploy/panel/Dockerfile" \
-        --tag "${image_tag}" \
-        --build-arg "PANEL_DOMAIN=${panel_domain}" \
-        --build-arg "SOURCE_COMMIT=${source_commit}" \
-        --build-arg "BUILD_TIME=${build_time}" \
-        "${release_dir}"
 
     local backup_dir previous_release=''
     backup_dir="${deploy_root}/backups/$(date -u +'%Y%m%dT%H%M%SZ')-${source_commit:0:12}"

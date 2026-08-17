@@ -18,7 +18,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       PANEL_DOMAIN: alipaneltest.thinderbox.com
       SSH_HOST: ${{ secrets.DEV_SERVICE_IP }}
@@ -122,6 +122,32 @@ jobs:
           echo "SOURCE_ARCHIVE=${source_archive}" >>"${GITHUB_ENV}"
           echo "SOURCE_SHA256=${source_sha256}" >>"${GITHUB_ENV}"
 
+      - name: Build and package the verified panel image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_tag="myremnawave-panel:${GITHUB_SHA}"
+          build_time="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          docker build --pull \
+            --file deploy/panel/Dockerfile \
+            --tag "${image_tag}" \
+            --build-arg "PANEL_DOMAIN=${PANEL_DOMAIN}" \
+            --build-arg "SOURCE_COMMIT=${GITHUB_SHA}" \
+            --build-arg "BUILD_TIME=${build_time}" \
+            .
+          actual_commit="$(docker image inspect \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "${image_tag}")"
+          [ "${actual_commit}" = "${GITHUB_SHA}" ]
+
+          image_archive="${RUNNER_TEMP}/myremnawave-panel-${GITHUB_SHA}.tar.gz"
+          docker save "${image_tag}" | gzip -1 >"${image_archive}"
+          test -s "${image_archive}"
+          image_sha256="$(sha256sum "${image_archive}" | awk '{ print $1 }')"
+          [[ "${image_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          echo "IMAGE_ARCHIVE=${image_archive}" >>"${GITHUB_ENV}"
+          echo "IMAGE_SHA256=${image_sha256}" >>"${GITHUB_ENV}"
+
       - name: Upload and deploy the verified release
         shell: bash
         run: |
@@ -151,8 +177,15 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \
             "${SOURCE_ARCHIVE}" "${remote}:${remote_staging}/source.tar.gz"
+          sshpass -e scp \
+            -P "${SSH_PORT}" \
+            -o BatchMode=no \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \
+            "${IMAGE_ARCHIVE}" "${remote}:${remote_staging}/panel-image.tar.gz"
 
-          remote_command="bash -s -- '${remote_staging}' '${GITHUB_SHA}' '${SOURCE_SHA256}' '${PANEL_DOMAIN}'"
+          remote_command="bash -s -- '${remote_staging}' '${GITHUB_SHA}' '${SOURCE_SHA256}' '${IMAGE_SHA256}' '${PANEL_DOMAIN}'"
           sshpass -e ssh "${ssh_options[@]}" "${remote}" "${remote_command}" <<'REMOTE'
           set -Eeuo pipefail
 
@@ -161,16 +194,20 @@ jobs:
             exit 1
           }
 
-          [ "$#" -eq 4 ] || die 'Invalid remote deployment arguments.'
+          [ "$#" -eq 5 ] || die 'Invalid remote deployment arguments.'
           staging="$1"
           source_commit="$2"
-          expected_sha256="$3"
-          panel_domain="$4"
+          expected_source_sha256="$3"
+          expected_image_sha256="$4"
+          panel_domain="$5"
           [[ "${staging}" =~ ^/tmp/myremnawave-deploy-[0-9]+-[0-9]+$ ]] || die 'Invalid staging path.'
           [[ "${source_commit}" =~ ^[0-9a-f]{40}$ ]] || die 'Invalid source commit.'
-          [[ "${expected_sha256}" =~ ^[0-9a-f]{64}$ ]] || die 'Invalid source checksum.'
+          [[ "${expected_source_sha256}" =~ ^[0-9a-f]{64}$ ]] || die 'Invalid source checksum.'
+          [[ "${expected_image_sha256}" =~ ^[0-9a-f]{64}$ ]] || die 'Invalid image checksum.'
           [ -f "${staging}/source.tar.gz" ] || die 'Source archive is missing.'
-          printf '%s  %s\n' "${expected_sha256}" "${staging}/source.tar.gz" | sha256sum --check --status
+          [ -f "${staging}/panel-image.tar.gz" ] || die 'Panel image archive is missing.'
+          printf '%s  %s\n' "${expected_source_sha256}" "${staging}/source.tar.gz" | sha256sum --check --status
+          printf '%s  %s\n' "${expected_image_sha256}" "${staging}/panel-image.tar.gz" | sha256sum --check --status
 
           deploy_root='/opt/myremnawave-panel'
           releases_root="${deploy_root}/releases"
@@ -199,7 +236,12 @@ jobs:
             trap - EXIT
           fi
 
-          bash "${release_dir}/deploy/panel/deploy.sh" "${release_dir}" "${panel_domain}" "${source_commit}"
+          bash "${release_dir}/deploy/panel/deploy.sh" \
+            "${release_dir}" \
+            "${panel_domain}" \
+            "${source_commit}" \
+            "${staging}/panel-image.tar.gz" \
+            "${expected_image_sha256}"
           REMOTE
 
       - name: Verify the public panel and deployed revision
