@@ -170,6 +170,8 @@ jobs:
             -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts"
           )
+          # The validated panel domain intentionally expands on the runner.
+          # shellcheck disable=SC2029
           ssh "${ssh_options[@]}" "${remote}" \
             "bash -s -- '${PANEL_DOMAIN}'" <<'REMOTE'
           set -euo pipefail
@@ -189,6 +191,8 @@ jobs:
             --output /dev/null \
             "https://${PANEL_DOMAIN}/"; then
             echo 'Public HTTPS failed while the server-local HTTPS path was healthy.' >&2
+            # The SSH target intentionally expands on the runner.
+            # shellcheck disable=SC2029
             ssh "${ssh_options[@]}" "${remote}" <<'REMOTE'
           set -u
           docker logs --tail 300 myremnawave-caddy 2>&1 \

@@ -168,11 +168,15 @@ jobs:
             -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts"
           )
           cleanup() {
+            # The validated staging path intentionally expands on the runner.
+            # shellcheck disable=SC2029
             ssh "${ssh_options[@]}" "${remote}" \
               "rm -rf -- '${remote_staging}'" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
 
+          # The validated staging path intentionally expands on the runner.
+          # shellcheck disable=SC2029
           ssh "${ssh_options[@]}" "${remote}" \
             "install -d -m 0700 '${remote_staging}'"
           scp \
@@ -193,6 +197,8 @@ jobs:
             "${IMAGE_ARCHIVE}" "${remote}:${remote_staging}/panel-image.tar.gz"
 
           remote_command="bash -s -- '${remote_staging}' '${GITHUB_SHA}' '${SOURCE_SHA256}' '${IMAGE_SHA256}' '${PANEL_DOMAIN}'"
+          # remote_command contains only validated runner values.
+          # shellcheck disable=SC2029
           ssh "${ssh_options[@]}" "${remote}" "${remote_command}" <<'REMOTE'
           set -Eeuo pipefail
 
