@@ -17,14 +17,14 @@ Existing credential directories are never overwritten.
 ## Install
 
 Create a Machine in the panel, then run the generated command as root on a
-fresh Debian 12, Ubuntu 22.04, or Ubuntu 24.04 server. The installer requires
+fresh Debian 12/13, Ubuntu 22.04, or Ubuntu 24.04 server. The installer requires
 an exact Agent release, verifies the selected release assets against the
 published SHA-256 manifest, enrolls once, and starts the hardened systemd
 service.
 
 ```sh
 curl --fail --silent --show-error --location \
-  https://raw.githubusercontent.com/FengHaoyun-MONSTER/myRemnawave/v0.1.0/apps/machine-agent/install.sh \
+  https://raw.githubusercontent.com/FengHaoyun-MONSTER/myRemnawave/v0.1.1/apps/machine-agent/install.sh \
   | sh -s -- \
       --panel-url https://panel.example.com/api/machine-enrollment \
       --token 'one-time-token-from-the-panel'
