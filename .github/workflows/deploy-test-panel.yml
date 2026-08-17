@@ -1,0 +1,256 @@
+name: Deploy Test Panel
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DEPLOY_TEST_PANEL to deploy the selected main-branch commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-test-panel
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PANEL_DOMAIN: alipaneltest.thinderbox.com
+      SSH_HOST: ${{ secrets.DEV_SERVICE_IP }}
+      SSH_PORT: ${{ secrets.DEV_SERVICE_SSH_PORT }}
+      SSH_USER: ${{ secrets.DEV_SERVICE_SSH_USER }}
+      SSHPASS: ${{ secrets.DEV_SERVICE_SSH_PASWARD }}
+      SSH_HOST_KEY_SHA256: ${{ secrets.DEV_SERVICE_SSH_HOST_KEY_SHA256 }}
+    steps:
+      - name: Check out the selected source commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Validate deployment authorization and inputs
+        shell: bash
+        env:
+          DEPLOY_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          [ "${GITHUB_REF}" = 'refs/heads/main' ]
+          [ "${DEPLOY_CONFIRMATION}" = 'DEPLOY_TEST_PANEL' ]
+          test -n "${SSH_HOST}"
+          test -n "${SSH_USER}"
+          test -n "${SSHPASS}"
+          test -n "${SSH_HOST_KEY_SHA256}"
+          case "${SSH_PORT}" in
+            ''|*[!0-9]*) echo 'SSH port must be numeric' >&2; exit 1 ;;
+          esac
+          test "${SSH_PORT}" -ge 1
+          test "${SSH_PORT}" -le 65535
+          [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          fingerprint_input="$(printf '%s' "${SSH_HOST_KEY_SHA256}" | tr '\r\n' '  ')"
+          if [[ "${fingerprint_input}" =~ (SHA256:[A-Za-z0-9+/]{43}={0,1}) ]]; then
+            fingerprint="${BASH_REMATCH[1]}"
+          else
+            fingerprint="$(printf '%s' "${fingerprint_input}" | tr -d '[:space:]')"
+            fingerprint="SHA256:${fingerprint}"
+          fi
+          [[ "${fingerprint}" =~ ^SHA256:[A-Za-z0-9+/]{43}=?$ ]]
+
+      - name: Install SSH password helper
+        run: |
+          sudo apt-get update
+          sudo apt-get install --assume-yes --no-install-recommends sshpass
+
+      - name: Verify DNS points to the test server
+        shell: bash
+        run: |
+          set -euo pipefail
+          panel_ips="$(mktemp)"
+          server_ips="$(mktemp)"
+          trap 'rm -f "${panel_ips}" "${server_ips}"' EXIT
+          getent ahostsv4 "${PANEL_DOMAIN}" | awk '{ print $1 }' | sort -u >"${panel_ips}"
+          getent ahostsv4 "${SSH_HOST}" | awk '{ print $1 }' | sort -u >"${server_ips}"
+          test -s "${panel_ips}"
+          test -s "${server_ips}"
+          if ! comm -12 "${panel_ips}" "${server_ips}" | grep -q .; then
+            echo 'Panel domain does not resolve to the configured test server' >&2
+            exit 1
+          fi
+          echo 'Panel DNS matches the configured test server.'
+
+      - name: Verify SSH host identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "${HOME}/.ssh"
+          scanned="$(mktemp)"
+          trap 'rm -f "${scanned}"' EXIT
+          for _ in 1 2 3 4 5; do
+            if ssh-keyscan -p "${SSH_PORT}" -t ed25519 "${SSH_HOST}" >"${scanned}" 2>/dev/null && test -s "${scanned}"; then
+              break
+            fi
+            sleep 2
+          done
+          test -s "${scanned}"
+          actual="$(ssh-keygen -lf "${scanned}" -E sha256 | awk '{ print $2 }' | sort -u)"
+          expected_input="$(printf '%s' "${SSH_HOST_KEY_SHA256}" | tr '\r\n' '  ')"
+          if [[ "${expected_input}" =~ (SHA256:[A-Za-z0-9+/]{43}={0,1}) ]]; then
+            expected="${BASH_REMATCH[1]}"
+          else
+            expected="$(printf '%s' "${expected_input}" | tr -d '[:space:]')"
+            expected="SHA256:${expected}"
+          fi
+          test "$(printf '%s\n' "${actual}" | sed '/^$/d' | wc -l)" -eq 1
+          if [ "${actual}" != "${expected}" ]; then
+            echo 'SSH host key fingerprint mismatch' >&2
+            exit 1
+          fi
+          install -m 0600 "${scanned}" "${HOME}/.ssh/known_hosts"
+          echo 'SSH host identity verified.'
+
+      - name: Package the exact repository source
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_archive="${RUNNER_TEMP}/myremnawave-${GITHUB_SHA}.tar.gz"
+          git archive --format=tar.gz --output="${source_archive}" "${GITHUB_SHA}"
+          source_sha256="$(sha256sum "${source_archive}" | awk '{ print $1 }')"
+          [[ "${source_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          echo "SOURCE_ARCHIVE=${source_archive}" >>"${GITHUB_ENV}"
+          echo "SOURCE_SHA256=${source_sha256}" >>"${GITHUB_ENV}"
+
+      - name: Upload and deploy the verified release
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="${SSH_USER}@${SSH_HOST}"
+          remote_staging="/tmp/myremnawave-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          [[ "${remote_staging}" =~ ^/tmp/myremnawave-deploy-[0-9]+-[0-9]+$ ]]
+          ssh_options=(
+            -p "${SSH_PORT}"
+            -o BatchMode=no
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts"
+          )
+          cleanup() {
+            sshpass -e ssh "${ssh_options[@]}" "${remote}" \
+              "rm -rf -- '${remote_staging}'" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          sshpass -e ssh "${ssh_options[@]}" "${remote}" \
+            "install -d -m 0700 '${remote_staging}'"
+          sshpass -e scp \
+            -P "${SSH_PORT}" \
+            -o BatchMode=no \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \
+            "${SOURCE_ARCHIVE}" "${remote}:${remote_staging}/source.tar.gz"
+
+          remote_command="bash -s -- '${remote_staging}' '${GITHUB_SHA}' '${SOURCE_SHA256}' '${PANEL_DOMAIN}'"
+          sshpass -e ssh "${ssh_options[@]}" "${remote}" "${remote_command}" <<'REMOTE'
+          set -Eeuo pipefail
+
+          die() {
+            printf '[remote-release] ERROR: %s\n' "$*" >&2
+            exit 1
+          }
+
+          [ "$#" -eq 4 ] || die 'Invalid remote deployment arguments.'
+          staging="$1"
+          source_commit="$2"
+          expected_sha256="$3"
+          panel_domain="$4"
+          [[ "${staging}" =~ ^/tmp/myremnawave-deploy-[0-9]+-[0-9]+$ ]] || die 'Invalid staging path.'
+          [[ "${source_commit}" =~ ^[0-9a-f]{40}$ ]] || die 'Invalid source commit.'
+          [[ "${expected_sha256}" =~ ^[0-9a-f]{64}$ ]] || die 'Invalid source checksum.'
+          [ -f "${staging}/source.tar.gz" ] || die 'Source archive is missing.'
+          printf '%s  %s\n' "${expected_sha256}" "${staging}/source.tar.gz" | sha256sum --check --status
+
+          deploy_root='/opt/myremnawave-panel'
+          releases_root="${deploy_root}/releases"
+          release_dir="${releases_root}/${source_commit}"
+          install -d -m 0700 "${deploy_root}" "${releases_root}"
+
+          if [ -e "${release_dir}" ]; then
+            [ -f "${release_dir}/.source-commit" ] || die 'Existing release is incomplete.'
+            grep -Fqx "${source_commit}" "${release_dir}/.source-commit" || die 'Existing release provenance mismatch.'
+          else
+            release_tmp="$(mktemp -d "${releases_root}/.${source_commit}.new.XXXXXX")"
+            cleanup_release() {
+              if [ -n "${release_tmp:-}" ] && [ -d "${release_tmp}" ]; then
+                rm -rf -- "${release_tmp}"
+              fi
+            }
+            trap cleanup_release EXIT
+            if tar -tzf "${staging}/source.tar.gz" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+              die 'Unsafe path found in source archive.'
+            fi
+            tar -xzf "${staging}/source.tar.gz" -C "${release_tmp}" --no-same-owner --no-same-permissions
+            printf '%s\n' "${source_commit}" >"${release_tmp}/.source-commit"
+            chmod 0700 "${release_tmp}/deploy/panel/deploy.sh"
+            mv "${release_tmp}" "${release_dir}"
+            release_tmp=''
+            trap - EXIT
+          fi
+
+          bash "${release_dir}/deploy/panel/deploy.sh" "${release_dir}" "${panel_domain}" "${source_commit}"
+          REMOTE
+
+      - name: Verify the public panel and deployed revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          trap 'rm -f "${headers}" "${body}"' EXIT
+          curl --fail --silent --show-error --location \
+            --retry 6 --retry-delay 5 --retry-all-errors \
+            --max-time 20 \
+            --dump-header "${headers}" \
+            --output "${body}" \
+            "https://${PANEL_DOMAIN}/"
+          grep -Eiq '^strict-transport-security:[[:space:]]*max-age=' "${headers}"
+          grep -Eiq '^x-content-type-options:[[:space:]]*nosniff' "${headers}"
+          grep -Eiq '<!doctype html|<html' "${body}"
+
+          sshpass -e ssh \
+            -p "${SSH_PORT}" \
+            -o BatchMode=no \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "bash -s -- '${GITHUB_SHA}'" <<'REMOTE'
+          set -euo pipefail
+          expected_commit="$1"
+          actual_commit="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' myremnawave-panel)"
+          [ "${actual_commit}" = "${expected_commit}" ]
+          [ "$(docker inspect --format '{{.State.Health.Status}}' myremnawave-panel)" = 'healthy' ]
+          [ "$(docker inspect --format '{{.State.Status}}' myremnawave-caddy)" = 'running' ]
+          for port in 3000 3001 5432 6379; do
+            if ss -ltnH "sport = :${port}" 2>/dev/null | grep -q .; then
+              echo "Unexpected host listener on TCP ${port}" >&2
+              exit 1
+            fi
+          done
+          docker compose \
+            --project-name myremnawave \
+            --env-file /opt/myremnawave-panel/.env \
+            --env-file /opt/myremnawave-panel/.deployment.env \
+            --file /opt/myremnawave-panel/compose.yml \
+            ps
+          REMOTE
+
+          {
+            echo '### Test panel deployment'
+            echo
+            echo "- Source commit: \`${GITHUB_SHA}\`"
+            echo "- URL: https://${PANEL_DOMAIN}"
+            echo '- HTTPS, security headers, container health, image provenance, and private service ports: PASS'
+          } >>"${GITHUB_STEP_SUMMARY}"

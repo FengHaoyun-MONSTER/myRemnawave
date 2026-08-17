@@ -1,0 +1,16 @@
+.git
+.github
+.idea
+.vscode
+**/.env
+**/.env.*
+!**/.env.sample
+**/node_modules
+**/dist
+**/coverage
+**/*.log
+**/*.exe
+**/*.test
+apps/machine-agent
+apps/node
+docs
