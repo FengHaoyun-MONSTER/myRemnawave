@@ -15,12 +15,15 @@ README. Each `panel-vX.Y.Z` GitHub Release contains:
 - `panel-release-metadata`, binding the version to a full source commit;
 - `SHA256SUMS`, covering the image, source, and metadata.
 
-The installer supports fresh Debian 13 and Ubuntu 22.04/24.04 amd64 servers. It requires at
-least 2 GiB RAM and 8 GiB free under `/opt`; a direct IPv4 `A` record must point
-to the server, and TCP 80/443/3010 plus UDP 443 must be free and reachable. It stops
-when an active installation exists. A matching `.install-intent` permits safe
-retry of an interrupted first installation but cannot be reused for a different
-domain or release.
+The installer supports fresh Debian 13 and Ubuntu 22.04/24.04 amd64 servers. It
+requires at least 2 GiB RAM and 8 GiB free under `/opt`; a direct IPv4 `A` record
+must point to the server, and TCP 80/443 plus UDP 443 must be free and reachable.
+The dedicated Machine control port defaults to TCP 3010 and must also be
+reachable. Use `--machine-control-public-port PORT` only when the test provider
+requires a different dedicated port. The installer stops when an active
+installation exists. A matching `.install-intent` permits safe retry of an
+interrupted first installation but cannot be reused for a different domain,
+release, or control port.
 
 For environments where GitHub downloads are performed in advance, download
 `SHA256SUMS`, the image, source archive, and metadata into one server directory,
@@ -30,6 +33,7 @@ then run the downloaded installer with the additional option:
 sudo sh install-panel.sh \
   --domain panel.example.com \
   --version panel-v0.1.1 \
+  --machine-control-public-port 3010 \
   --asset-dir /path/to/release-assets
 ```
 
@@ -64,9 +68,10 @@ it is not a fully air-gapped installation mode.
   test fails, it prints bounded container logs and restores the previous runtime
   files and image. The additive database migration is intentionally left in place.
 - PostgreSQL, Valkey, and the panel API have no host-published ports. Caddy
-  publishes HTTP/HTTPS, and the panel publishes only the dedicated TCP 3010
-  Machine Agent listener.
-- TCP 3010 requires a valid client certificate signed by the panel's private
+  publishes HTTP/HTTPS, and the panel publishes only the configured dedicated
+  Machine Agent TCP listener. The normal default is 3010; the UpCloud free-trial
+  test workflow uses 3389 because that provider blocks non-standard ports.
+- The Machine control listener requires a valid client certificate signed by the panel's private
   Machine CA. The listener certificate is generated in memory at backend start,
   contains the panel hostname SAN, and is never written to the host filesystem.
 
@@ -75,6 +80,8 @@ it is not a fully air-gapped installation mode.
 The persistent deployment root is `/opt/myremnawave-panel`:
 
 - `.env` contains persistent generated secrets.
+- `.deployment.env` contains the active image provenance and public Machine
+  control port; the backend continues to listen on container-local TCP 3010.
 - `releases/<commit>` contains immutable source releases.
 - `current` points to the verified active release.
 - `previous` points to the prior release after an update.
@@ -96,4 +103,6 @@ lock prevents two releases from mutating the panel stack concurrently.
 The deployment script waits for database and panel health, waits for Caddy to
 serve a publicly trusted certificate for the configured hostname, and performs
 an HTTPS request through Caddy. The workflow then repeats public HTTPS and
-security-header smoke checks from the GitHub-hosted runner.
+security-header smoke checks from the GitHub-hosted runner. It also establishes
+TLS to the configured public Machine control port, checks the certificate
+hostname, and confirms that a client without a Machine certificate is rejected.

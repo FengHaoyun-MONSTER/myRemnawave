@@ -6,6 +6,7 @@ readonly INSTALLER='/repo/deploy/panel/install-panel.sh'
 readonly DEPLOY_ROOT='/opt/myremnawave-panel'
 readonly TEST_DOMAIN='panel.example.com'
 readonly TEST_VERSION='panel-v0.1.1'
+readonly TEST_PUBLIC_PORT='3389'
 readonly SOURCE_COMMIT='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 
 test_root="$(mktemp -d /tmp/myremnawave-installer-test.XXXXXX)"
@@ -43,12 +44,13 @@ EOF
 cat >"${source_root}/deploy/panel/deploy.sh" <<EOF
 #!/usr/bin/env bash
 set -Eeuo pipefail
-[ "\$#" -eq 5 ]
+[ "\$#" -eq 6 ]
 [ "\$1" = '${DEPLOY_ROOT}/releases/${SOURCE_COMMIT}' ]
 [ "\$2" = '${TEST_DOMAIN}' ]
 [ "\$3" = '${SOURCE_COMMIT}' ]
 [ -f "\$4" ]
 [[ "\$5" =~ ^[0-9a-f]{64}\$ ]]
+[ "\$6" = '${TEST_PUBLIC_PORT}' ]
 if [ ! -f '${DEPLOY_ROOT}/.stub-failed-once' ]; then
     touch '${DEPLOY_ROOT}/.stub-failed-once'
     exit 42
@@ -77,6 +79,7 @@ installer=(
     sh "${INSTALLER}"
     --domain "${TEST_DOMAIN}"
     --version "${TEST_VERSION}"
+    --machine-control-public-port "${TEST_PUBLIC_PORT}"
     --asset-dir "${assets}"
 )
 
@@ -88,6 +91,8 @@ else
     [ "${status}" -eq 42 ]
 fi
 [ -f "${DEPLOY_ROOT}/.install-intent" ]
+grep -Fqx "MACHINE_CONTROL_PUBLIC_PORT=${TEST_PUBLIC_PORT}" \
+    "${DEPLOY_ROOT}/.install-intent"
 [ ! -e "${DEPLOY_ROOT}/current" ]
 
 PATH="${mock_bin}:${PATH}" "${installer[@]}"
@@ -97,6 +102,24 @@ PATH="${mock_bin}:${PATH}" "${installer[@]}"
 
 if PATH="${mock_bin}:${PATH}" "${installer[@]}"; then
     echo 'Installer overwrote an existing installation.' >&2
+    exit 1
+fi
+
+if PATH="${mock_bin}:${PATH}" sh "${INSTALLER}" \
+        --domain "${TEST_DOMAIN}" \
+        --version "${TEST_VERSION}" \
+        --machine-control-public-port 443 \
+        --asset-dir "${assets}"; then
+    echo 'Installer accepted a reserved machine-control public port.' >&2
+    exit 1
+fi
+
+if PATH="${mock_bin}:${PATH}" sh "${INSTALLER}" \
+        --domain "${TEST_DOMAIN}" \
+        --version "${TEST_VERSION}" \
+        --machine-control-public-port 999999999999999999999999 \
+        --asset-dir "${assets}"; then
+    echo 'Installer accepted an out-of-range machine-control public port.' >&2
     exit 1
 fi
 

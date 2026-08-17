@@ -14,8 +14,8 @@ backend on the server. The current installer supports Debian 13 and Ubuntu
 22.04/24.04 on amd64.
 Before running it, point the panel domain's direct IPv4 `A` record to the new
 server and make sure inbound TCP 80/443/3010 and UDP 443 are allowed. TCP 3010
-is the dedicated mutual-TLS Machine Agent control channel; it does not accept
-ordinary unauthenticated HTTP clients.
+is the default dedicated mutual-TLS Machine Agent control channel; it does not
+accept ordinary unauthenticated HTTP clients.
 
 Replace `panel.example.com` and run as a user with `sudo` access:
 
@@ -30,6 +30,21 @@ and prebuilt image against the release SHA-256 manifest, validates DNS and free
 ports, generates secrets locally, starts the digest-pinned stack, obtains the
 panel HTTPS certificate, and waits for health checks. It refuses to overwrite
 an existing installation and can resume the same interrupted first install.
+
+If a test provider blocks TCP 3010 but permits another dedicated inbound port,
+set it explicitly without changing the backend's container-local listener. For
+example, UpCloud free-trial servers permit inbound TCP 3389:
+
+```bash
+bash -o pipefail -c "curl -fsSL --proto '=https' --tlsv1.2 \
+  https://github.com/FengHaoyun-MONSTER/myRemnawave/releases/download/panel-v0.1.1/install-panel.sh \
+  | sudo sh -s -- --domain panel.example.com --version panel-v0.1.1 \
+      --machine-control-public-port 3389"
+```
+
+The selected port is validated, persisted for safe resume and rollback, and
+included in the Agent control URL. Ports used by the panel, database, cache,
+metrics, or HTTPS proxy cannot be selected.
 
 After installation, open `https://panel.example.com` and create the first Super
 Admin. This installer is for fresh test servers only; upgrades and rollback use
