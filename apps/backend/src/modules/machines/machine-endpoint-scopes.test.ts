@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     CreateMachineCommand,
     GetMachineCommand,
+    GetMachineControlStatusCommand,
     GetMachinesCommand,
     ProvisionMachineCommand,
     PublishMachineCommand,
@@ -16,6 +17,7 @@ describe('machine API endpoint scopes', () => {
             CreateMachineCommand.endpointDetails.SCOPE,
             GetMachinesCommand.endpointDetails.SCOPE,
             GetMachineCommand.endpointDetails.SCOPE,
+            GetMachineControlStatusCommand.endpointDetails.SCOPE,
             RotateMachineEnrollmentTokenCommand.endpointDetails.SCOPE,
             ProvisionMachineCommand.endpointDetails.SCOPE,
             RetryMachineCommand.endpointDetails.SCOPE,
