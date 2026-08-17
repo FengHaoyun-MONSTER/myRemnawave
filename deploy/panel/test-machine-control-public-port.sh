@@ -70,13 +70,16 @@ fi
 
 invalid_internal_env="${test_root}/invalid-internal.env"
 cat >"${invalid_internal_env}" <<'EOF'
-MACHINE_CONTROL_PUBLIC_URL=wss://panel.example.com:3389/api/machine-control
+MACHINE_CONTROL_PUBLIC_URL=wss://panel.example.com:3010/api/machine-control
 MACHINE_CONTROL_PORT=3389
 EOF
 if (ensure_machine_control_env "${invalid_internal_env}" 'panel.example.com' '3389'); then
     echo 'A changed container-local machine-control port was accepted.' >&2
     exit 1
 fi
+grep -Fqx \
+    'MACHINE_CONTROL_PUBLIC_URL=wss://panel.example.com:3010/api/machine-control' \
+    "${invalid_internal_env}"
 grep -Fqx 'MACHINE_CONTROL_PORT=3389' "${invalid_internal_env}"
 
 for invalid_port in 0 65536 abc 80 443 3000 3001 5432 6379; do

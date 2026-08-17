@@ -145,18 +145,6 @@ validate_machine_control_public_port() {
     esac
 }
 
-replace_env_value() {
-    local target="$1" key="$2" value="$3"
-    local next="${target}.next"
-
-    awk -v key="${key}" -v value="${value}" '
-        index($0, key "=") == 1 { print key "=" value; next }
-        { print }
-    ' "${target}" >"${next}"
-    chmod 0600 "${next}"
-    mv -f "${next}" "${target}"
-}
-
 generate_secret_env() {
     local target="$1" domain="$2" public_port="$3"
     local app_secret database_password metrics_password
@@ -196,7 +184,7 @@ ensure_machine_control_env() {
     local target="$1" domain="$2" public_port="$3"
     local expected_url="wss://${domain}:${public_port}/api/machine-control"
     local expected_port='MACHINE_CONTROL_PORT=3010'
-    local url_count current_url current_public_port
+    local url_count port_count current_url current_public_port next
 
     url_count="$(grep -c '^MACHINE_CONTROL_PUBLIC_URL=' "${target}" || true)"
     [ "${url_count}" -le 1 ] \
@@ -209,26 +197,41 @@ ensure_machine_control_env() {
                     current_public_port="${current_url#"wss://${domain}:"}"
                     current_public_port="${current_public_port%/api/machine-control}"
                     validate_machine_control_public_port "${current_public_port}"
-                    replace_env_value \
-                        "${target}" 'MACHINE_CONTROL_PUBLIC_URL' "${expected_url}"
                     ;;
                 *)
                     die 'Existing machine-control URL is not managed by this panel deployment.'
                     ;;
             esac
         fi
-    else
-        printf 'MACHINE_CONTROL_PUBLIC_URL=%s\n' "${expected_url}" >>"${target}"
     fi
-    if [ "$(grep -c '^MACHINE_CONTROL_PORT=' "${target}" || true)" -gt 1 ]; then
+    port_count="$(grep -c '^MACHINE_CONTROL_PORT=' "${target}" || true)"
+    if [ "${port_count}" -gt 1 ]; then
         die 'Existing panel environment contains duplicate machine-control ports.'
-    elif grep -q '^MACHINE_CONTROL_PORT=' "${target}"; then
+    elif [ "${port_count}" -eq 1 ]; then
         grep -Fqx "${expected_port}" "${target}" \
             || die 'Existing internal machine-control port is not TCP 3010.'
-    else
-        printf '%s\n' "${expected_port}" >>"${target}"
     fi
-    chmod 0600 "${target}"
+
+    next="${target}.next"
+    awk -v expected_url="${expected_url}" '
+        /^MACHINE_CONTROL_PUBLIC_URL=/ {
+            print "MACHINE_CONTROL_PUBLIC_URL=" expected_url
+            found_url = 1
+            next
+        }
+        /^MACHINE_CONTROL_PORT=/ {
+            print "MACHINE_CONTROL_PORT=3010"
+            found_port = 1
+            next
+        }
+        { print }
+        END {
+            if (!found_url) print "MACHINE_CONTROL_PUBLIC_URL=" expected_url
+            if (!found_port) print "MACHINE_CONTROL_PORT=3010"
+        }
+    ' "${target}" >"${next}"
+    chmod 0600 "${next}"
+    mv -f "${next}" "${target}"
 }
 
 write_deployment_env() {
