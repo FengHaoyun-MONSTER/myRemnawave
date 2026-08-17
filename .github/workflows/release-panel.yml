@@ -100,4 +100,4 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --title "${GITHUB_REF_NAME}" \
-            --notes "Fresh-install panel release for Ubuntu 22.04/24.04 amd64. Assets are versioned and SHA-256 verified by the installer."
+            --notes "Fresh-install panel release for Debian 13 and Ubuntu 22.04/24.04 amd64. Assets are versioned and SHA-256 verified by the installer."

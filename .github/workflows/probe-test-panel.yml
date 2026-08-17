@@ -11,11 +11,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
-      PANEL_DOMAIN: alipaneltest.thinderbox.com
+      PANEL_DOMAIN: upcloudfreetier.thinderbox.com
       SSH_HOST: ${{ secrets.DEV_SERVICE_IP }}
       SSH_PORT: ${{ secrets.DEV_SERVICE_SSH_PORT }}
       SSH_USER: ${{ secrets.DEV_SERVICE_SSH_USER }}
-      SSHPASS: ${{ secrets.DEV_SERVICE_SSH_PASWARD }}
+      SSH_PRIVATE_KEY: ${{ secrets.DEV_SERVICE_SSH_PRIVATE_KEY }}
       SSH_HOST_KEY_SHA256: ${{ secrets.DEV_SERVICE_SSH_HOST_KEY_SHA256 }}
     steps:
       - name: Validate deployment inputs
@@ -24,7 +24,7 @@ jobs:
           set -euo pipefail
           test -n "${SSH_HOST}"
           test -n "${SSH_USER}"
-          test -n "${SSHPASS}"
+          test -n "${SSH_PRIVATE_KEY}"
           test -n "${SSH_HOST_KEY_SHA256}"
           case "${SSH_PORT}" in
             ''|*[!0-9]*) echo 'SSH port must be numeric' >&2; exit 1 ;;
@@ -43,10 +43,15 @@ jobs:
             exit 1
           fi
 
-      - name: Install SSH password helper
+      - name: Prepare SSH private key
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install --assume-yes --no-install-recommends sshpass
+          set -euo pipefail
+          key_path="${RUNNER_TEMP}/deploy-key"
+          umask 077
+          printf '%s\n' "${SSH_PRIVATE_KEY}" >"${key_path}"
+          ssh-keygen -y -f "${key_path}" >/dev/null
+          echo "SSH_KEY_PATH=${key_path}" >>"${GITHUB_ENV}"
 
       - name: Verify DNS points to the SSH server
         shell: bash
@@ -99,9 +104,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sshpass -e ssh \
+          ssh \
+            -i "${SSH_KEY_PATH}" \
             -p "${SSH_PORT}" \
-            -o BatchMode=no \
+            -o BatchMode=yes \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
@@ -157,13 +163,16 @@ jobs:
           set -euo pipefail
           remote="${SSH_USER}@${SSH_HOST}"
           ssh_options=(
+            -i "${SSH_KEY_PATH}"
             -p "${SSH_PORT}"
-            -o BatchMode=no
+            -o BatchMode=yes
             -o IdentitiesOnly=yes
             -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts"
           )
-          sshpass -e ssh "${ssh_options[@]}" "${remote}" \
+          # The validated panel domain intentionally expands on the runner.
+          # shellcheck disable=SC2029
+          ssh "${ssh_options[@]}" "${remote}" \
             "bash -s -- '${PANEL_DOMAIN}'" <<'REMOTE'
           set -euo pipefail
           panel_domain="$1"
@@ -182,7 +191,9 @@ jobs:
             --output /dev/null \
             "https://${PANEL_DOMAIN}/"; then
             echo 'Public HTTPS failed while the server-local HTTPS path was healthy.' >&2
-            sshpass -e ssh "${ssh_options[@]}" "${remote}" <<'REMOTE'
+            # The SSH target intentionally expands on the runner.
+            # shellcheck disable=SC2029
+            ssh "${ssh_options[@]}" "${remote}" <<'REMOTE'
           set -u
           docker logs --tail 300 myremnawave-caddy 2>&1 \
             | grep -E '"logger":"tls|"level":"error"|certificate|ACME' \

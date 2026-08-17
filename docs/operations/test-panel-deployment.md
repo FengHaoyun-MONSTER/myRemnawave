@@ -1,7 +1,7 @@
 # Test panel deployment
 
 The `Deploy Test Panel` GitHub Actions workflow installs and updates the panel at
-`alipaneltest.thinderbox.com`. It is intentionally limited to a fresh
+`upcloudfreetier.thinderbox.com`. It is intentionally limited to a fresh
 development/test server and must not be reused for production.
 
 ## Fresh-server installer
@@ -15,7 +15,7 @@ README. Each `panel-vX.Y.Z` GitHub Release contains:
 - `panel-release-metadata`, binding the version to a full source commit;
 - `SHA256SUMS`, covering the image, source, and metadata.
 
-The installer supports fresh Ubuntu 22.04/24.04 amd64 servers. It requires at
+The installer supports fresh Debian 13 and Ubuntu 22.04/24.04 amd64 servers. It requires at
 least 2 GiB RAM and 8 GiB free under `/opt`; a direct IPv4 `A` record must point
 to the server, and TCP 80/443/3010 plus UDP 443 must be free and reachable. It stops
 when an active installation exists. A matching `.install-intent` permits safe
@@ -29,7 +29,7 @@ then run the downloaded installer with the additional option:
 ```bash
 sudo sh install-panel.sh \
   --domain panel.example.com \
-  --version panel-v0.1.0 \
+  --version panel-v0.1.1 \
   --asset-dir /path/to/release-assets
 ```
 
@@ -43,6 +43,10 @@ it is not a fully air-gapped installation mode.
 - DNS must resolve to the configured SSH host.
 - The scanned Ed25519 SSH host key must match
   `DEV_SERVICE_SSH_HOST_KEY_SHA256` before authentication.
+- GitHub Actions authenticates with the dedicated
+  `DEV_SERVICE_SSH_PRIVATE_KEY` secret. Password authentication and `sshpass`
+  are not used. `DEV_SERVICE_IP`, `DEV_SERVICE_SSH_PORT`, and
+  `DEV_SERVICE_SSH_USER` identify the authorized test host.
 - The source archive is created from the dispatched Git commit. The panel image
   is built on the GitHub-hosted runner from that same checkout, labeled with the
   full source commit, and exported as a compressed Docker archive. Both archives
