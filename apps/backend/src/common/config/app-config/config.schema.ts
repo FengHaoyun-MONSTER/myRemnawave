@@ -159,18 +159,18 @@ export const configSchema = z
             .pipe(z.array(z.number()).optional()),
     })
     .superRefine((data, ctx) => {
-        const machineControlValues = [
-            data.MACHINE_CONTROL_PUBLIC_URL,
-            data.MACHINE_CONTROL_TLS_CERT_PATH,
-            data.MACHINE_CONTROL_TLS_KEY_PATH,
-        ];
-        const configuredMachineControlValues = machineControlValues.filter(Boolean).length;
-        if (configuredMachineControlValues !== 0 && configuredMachineControlValues !== 3) {
+        const hasControlUrl = Boolean(data.MACHINE_CONTROL_PUBLIC_URL);
+        const hasControlCert = Boolean(data.MACHINE_CONTROL_TLS_CERT_PATH);
+        const hasControlKey = Boolean(data.MACHINE_CONTROL_TLS_KEY_PATH);
+        if (
+            hasControlCert !== hasControlKey ||
+            (!hasControlUrl && (hasControlCert || hasControlKey))
+        ) {
             ctx.issues.push({
                 input: data,
                 code: 'custom',
                 message:
-                    'MACHINE_CONTROL_PUBLIC_URL, MACHINE_CONTROL_TLS_CERT_PATH, and MACHINE_CONTROL_TLS_KEY_PATH must be configured together',
+                    'MACHINE_CONTROL_PUBLIC_URL is required, and custom TLS certificate and key paths must be configured together',
                 path: ['MACHINE_CONTROL_PUBLIC_URL'],
             });
         }

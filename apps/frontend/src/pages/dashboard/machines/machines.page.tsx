@@ -21,7 +21,7 @@ import {
     Title
 } from '@mantine/core'
 import { MachineSchema, ProvisionMachineCommand } from '@remnawave/backend-contract'
-import { ReactNode, useMemo, useState } from 'react'
+import { ReactNode, useEffect, useMemo, useState } from 'react'
 import { TbCertificate, TbCloudLock, TbPlus, TbServer, TbShieldCheck } from 'react-icons/tb'
 import { z } from 'zod'
 
@@ -31,6 +31,7 @@ import {
     nodesQueryKeys,
     useCreateMachine,
     useGetInternalSquads,
+    useGetMachineControlStatus,
     useGetMachines,
     useGetNodes,
     useProvisionMachine,
@@ -41,11 +42,15 @@ import {
 import { LoadingScreen, Page, PageHeaderShared } from '@shared/ui'
 
 type Machine = z.infer<typeof MachineSchema>
-type WizardMachine = { machine: Machine; enrollmentToken?: string }
+type WizardMachine = {
+    machine: Machine
+    enrollmentToken?: string
+    enrollmentExpiresAt?: Date
+}
 type ProtocolSelection = Record<'HYSTERIA2' | 'VLESS_REALITY' | 'VLESS_TLS_VISION', boolean>
 type CertificateMode = 'HTTP_01' | 'IMPORT_EXISTING'
 
-const AGENT_VERSION = 'v0.1.1'
+const AGENT_VERSION = 'v0.1.2'
 
 const initialProtocols: ProtocolSelection = {
     VLESS_REALITY: true,
@@ -55,12 +60,20 @@ const initialProtocols: ProtocolSelection = {
 
 export function MachinesPage() {
     const { data: machines, isLoading } = useGetMachines()
+    const { data: controlStatus } = useGetMachineControlStatus()
     const { data: nodes } = useGetNodes()
     const { data: squads } = useGetInternalSquads()
     const [opened, setOpened] = useState(false)
     const [activeStep, setActiveStep] = useState(0)
     const [wizardMachine, setWizardMachine] = useState<WizardMachine | null>(null)
     const [provisionedNodeUuids, setProvisionedNodeUuids] = useState<string[]>([])
+    const [clock, setClock] = useState(() => Date.now())
+
+    useEffect(() => {
+        if (!wizardMachine?.enrollmentToken) return
+        const timer = window.setInterval(() => setClock(Date.now()), 1_000)
+        return () => window.clearInterval(timer)
+    }, [wizardMachine?.enrollmentToken])
 
     const [name, setName] = useState('')
     const [address, setAddress] = useState('')
@@ -138,7 +151,8 @@ export function MachinesPage() {
             onSuccess: (result) => {
                 setWizardMachine({
                     machine: result.machine,
-                    enrollmentToken: result.enrollmentToken
+                    enrollmentToken: result.enrollmentToken,
+                    enrollmentExpiresAt: result.enrollmentExpiresAt
                 })
                 setActiveStep(1)
                 refresh()
@@ -150,7 +164,8 @@ export function MachinesPage() {
             onSuccess: (result) => {
                 setWizardMachine({
                     machine: result.machine,
-                    enrollmentToken: result.enrollmentToken
+                    enrollmentToken: result.enrollmentToken,
+                    enrollmentExpiresAt: result.enrollmentExpiresAt
                 })
                 setActiveStep(1)
                 setOpened(true)
@@ -262,12 +277,17 @@ export function MachinesPage() {
     const provisionRequest = buildProvisionRequest()
     const agentConnected = Boolean(currentMachine?.agentCapabilities.length)
     const selectedCount = Object.values(protocols).filter(Boolean).length
+    const enrollmentRemaining = wizardMachine?.enrollmentExpiresAt
+        ? Math.max(0, wizardMachine.enrollmentExpiresAt.getTime() - clock)
+        : null
+    const controlReady = controlStatus?.ready === true
 
     return (
         <Page title="Machines">
             <PageHeaderShared
                 actions={
                     <Button
+                        disabled={!controlReady}
                         leftSection={<TbPlus size={18} />}
                         onClick={() => {
                             resetWizard()
@@ -281,6 +301,13 @@ export function MachinesPage() {
                 icon={<TbServer size={24} />}
                 title="Machines"
             />
+
+            {!controlReady && (
+                <Alert color="red" mb="md" title="Machine control plane unavailable">
+                    Machine enrollment is disabled until the mTLS control listener is configured and
+                    ready. Check the panel deployment and TCP port 3010 before creating a machine.
+                </Alert>
+            )}
 
             <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }}>
                 {(machines ?? []).map((machine) => {
@@ -394,6 +421,13 @@ export function MachinesPage() {
                             </Alert>
                             {enrollmentCommand ? (
                                 <>
+                                    {enrollmentRemaining !== null && (
+                                        <Alert color={enrollmentRemaining > 0 ? 'yellow' : 'red'}>
+                                            {enrollmentRemaining > 0
+                                                ? `This one-time token expires in ${formatRemaining(enrollmentRemaining)}.`
+                                                : 'This one-time token has expired. Issue a new token before enrolling.'}
+                                        </Alert>
+                                    )}
                                     <Code block style={{ overflowWrap: 'anywhere' }}>
                                         {enrollmentCommand}
                                     </Code>
@@ -404,6 +438,19 @@ export function MachinesPage() {
                                             </Button>
                                         )}
                                     </CopyButton>
+                                    {!agentConnected && enrollmentRemaining === 0 && (
+                                        <Button
+                                            loading={isRotating}
+                                            onClick={() =>
+                                                wizardMachine &&
+                                                rotateToken({
+                                                    route: { uuid: wizardMachine.machine.uuid }
+                                                })
+                                            }
+                                        >
+                                            Issue a new one-time token
+                                        </Button>
+                                    )}
                                 </>
                             ) : (
                                 !agentConnected && (
@@ -774,6 +821,13 @@ function ProtocolToggle(props: {
 
 function shellQuote(value: string): string {
     return `'${value.replaceAll("'", `'"'"'`)}'`
+}
+
+function formatRemaining(milliseconds: number): string {
+    const totalSeconds = Math.ceil(milliseconds / 1_000)
+    const minutes = Math.floor(totalSeconds / 60)
+    const seconds = totalSeconds % 60
+    return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
 function statusColor(status: Machine['status']): string {

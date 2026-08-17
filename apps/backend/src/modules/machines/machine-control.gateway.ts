@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 
 import { TypedConfigService } from '@common/config/app-config';
+import { generateMachineControlServerCertificate } from '@common/utils/certs/generate-machine-control-server-cert.util';
 
 import {
     agentEnvelopeSchema,
@@ -127,20 +128,29 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
             return;
         }
 
-        const certPath = this.config.get('MACHINE_CONTROL_TLS_CERT_PATH');
-        const keyPath = this.config.get('MACHINE_CONTROL_TLS_KEY_PATH');
-        if (!certPath || !keyPath || !isAbsolute(certPath) || !isAbsolute(keyPath)) {
-            throw new Error('Machine control TLS certificate and key paths must be absolute');
-        }
         const authority = await this.machinesRepository.getCertificateAuthority();
         if (!authority) {
             throw new Error('Machine control certificate authority is unavailable');
         }
 
-        const [certificate, privateKey] = await Promise.all([
-            readFile(certPath),
-            readFile(keyPath),
-        ]);
+        const certPath = this.config.get('MACHINE_CONTROL_TLS_CERT_PATH');
+        const keyPath = this.config.get('MACHINE_CONTROL_TLS_KEY_PATH');
+        let certificate: Buffer | string;
+        let privateKey: Buffer | string;
+        if (certPath && keyPath) {
+            if (!isAbsolute(certPath) || !isAbsolute(keyPath)) {
+                throw new Error('Machine control TLS certificate and key paths must be absolute');
+            }
+            [certificate, privateKey] = await Promise.all([readFile(certPath), readFile(keyPath)]);
+        } else {
+            const generated = await generateMachineControlServerCertificate(
+                new URL(publicUrl).hostname,
+                authority.caCert,
+                authority.caKey,
+            );
+            certificate = generated.certificatePem;
+            privateKey = generated.privateKeyPem;
+        }
         const expectedPath = new URL(publicUrl).pathname;
         this.server = createServer({
             cert: certificate,
@@ -201,6 +211,10 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
         if (session?.readyState === WebSocket.OPEN) {
             await this.sendReadyCommands(session, machineUuid);
         }
+    }
+
+    isReady(): boolean {
+        return this.server?.listening === true;
     }
 
     private async handleUpgrade(

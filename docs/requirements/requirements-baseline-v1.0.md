@@ -101,8 +101,11 @@ Inbound tags are runtime identifiers, not access-control identities.
 ## 4. Machine enrollment and control plane
 
 - Enrollment uses one administrator-executed root bootstrap command.
-- The command carries a short-lived, one-time, machine-bound token. Only a hash
-  is retained server-side; replay and expired tokens are rejected.
+- The command carries a 30-minute, one-time, machine-bound token. Only hashes
+  are retained server-side. For 30 minutes after a successful exchange, the
+  exact same token hash, attempt ID, and CSR may retrieve the same certificate
+  response so an ambiguous network failure is safely resumable; changed or
+  expired replays are rejected.
 - The panel does not store SSH credentials and does not mount a Docker socket.
 - The Agent initiates an outbound mutually authenticated connection to the
   panel. Child management ports `2222`, `2223`, and `2224` bind locally and are

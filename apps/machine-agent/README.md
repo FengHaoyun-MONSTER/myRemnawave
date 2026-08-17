@@ -12,7 +12,9 @@ service lifecycle. It has no arbitrary command or shell execution endpoint.
 Enrollment generates an ECDSA P-256 key on the Machine. The private key is
 never sent to the panel; the Agent submits only a PKCS#10 CSR and atomically
 installs the returned client certificate, CA certificate, and environment file.
-Existing credential directories are never overwritten.
+Pending key/CSR state is root-only and retained across an ambiguous network
+failure, allowing the same enrollment attempt to resume safely. Existing
+credential directories are never overwritten.
 
 ## Install
 
@@ -24,14 +26,17 @@ service.
 
 ```sh
 curl --fail --silent --show-error --location \
-  https://raw.githubusercontent.com/FengHaoyun-MONSTER/myRemnawave/v0.1.1/apps/machine-agent/install.sh \
+  https://raw.githubusercontent.com/FengHaoyun-MONSTER/myRemnawave/v0.1.2/apps/machine-agent/install.sh \
   | sh -s -- \
       --panel-url https://panel.example.com/api/machine-enrollment \
       --token 'one-time-token-from-the-panel'
 ```
 
-The enrollment token expires after 15 minutes and is invalidated after its
-first successful use. Do not save it in scripts or configuration management.
+The enrollment token expires after 30 minutes and is invalidated after its
+first successful use. A short replay window returns the same response only for
+the exact persisted attempt and CSR. Legacy v0.1.1 agents remain compatible
+for their first exchange, but only v0.1.2 and newer receive the idempotent retry
+guarantee. Do not save the token in scripts or configuration management.
 
 ```sh
 myremnawave-agent enroll \

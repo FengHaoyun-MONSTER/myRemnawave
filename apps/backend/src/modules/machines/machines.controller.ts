@@ -19,6 +19,7 @@ import {
     CreateMachineCommand,
     EnrollMachineCommand,
     GetMachineCommand,
+    GetMachineControlStatusCommand,
     GetMachinesCommand,
     ProvisionMachineCommand,
     PublishMachineCommand,
@@ -32,6 +33,7 @@ import {
     EnrollMachineBodyDto,
     EnrollMachineResponseDto,
     GetMachineParamDto,
+    GetMachineControlStatusResponseDto,
     GetMachineResponseDto,
     GetMachinesResponseDto,
     ProvisionMachineBodyDto,
@@ -74,6 +76,15 @@ export class MachinesController {
     })
     async getMachines() {
         return { response: await this.machinesService.getMachines() };
+    }
+
+    @Endpoint({
+        type: GetMachineControlStatusResponseDto,
+        command: GetMachineControlStatusCommand,
+        httpCode: HttpStatus.OK,
+    })
+    getMachineControlStatus() {
+        return { response: this.machinesService.getControlStatus() };
     }
 
     @Endpoint({

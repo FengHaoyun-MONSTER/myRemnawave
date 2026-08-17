@@ -18,6 +18,10 @@ services:
     hostname: panel
     env_file:
       - ${DEPLOY_ROOT:?DEPLOY_ROOT is required}/.env
+    ports:
+      - target: 3010
+        published: "3010"
+        protocol: tcp
     volumes:
       - valkey-socket:/var/run/valkey
     networks:

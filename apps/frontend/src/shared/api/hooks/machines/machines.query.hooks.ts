@@ -1,5 +1,9 @@
 import { createQueryKeys } from '@lukemorales/query-key-factory'
-import { GetMachineCommand, GetMachinesCommand } from '@remnawave/backend-contract'
+import {
+    GetMachineCommand,
+    GetMachineControlStatusCommand,
+    GetMachinesCommand
+} from '@remnawave/backend-contract'
 
 import { sToMs } from '@shared/utils/time-utils'
 
@@ -7,7 +11,20 @@ import { createGetQueryHook, errorHandler } from '../../tsq-helpers'
 
 export const machinesQueryKeys = createQueryKeys('machines', {
     getMachines: { queryKey: null },
-    getMachine: (route: { uuid: string }) => ({ queryKey: [route] })
+    getMachine: (route: { uuid: string }) => ({ queryKey: [route] }),
+    getControlStatus: { queryKey: ['control-status'] }
+})
+
+export const useGetMachineControlStatus = createGetQueryHook({
+    endpoint: GetMachineControlStatusCommand.TSQ_url,
+    responseSchema: GetMachineControlStatusCommand.ResponseSchema,
+    getQueryKey: () => machinesQueryKeys.getControlStatus.queryKey,
+    rQueryParams: {
+        refetchInterval: sToMs(5),
+        refetchOnMount: true,
+        staleTime: 0
+    },
+    errorHandler: (error) => errorHandler(error, 'Get Machine Control Status')
 })
 
 export const useGetMachines = createGetQueryHook({

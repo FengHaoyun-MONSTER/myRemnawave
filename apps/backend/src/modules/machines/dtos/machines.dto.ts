@@ -1,6 +1,7 @@
 import {
     CreateMachineCommand,
     EnrollMachineCommand,
+    GetMachineControlStatusCommand,
     GetMachineCommand,
     GetMachinesCommand,
     ProvisionMachineCommand,
@@ -13,6 +14,9 @@ import { createZodDto } from 'nestjs-zod';
 export class CreateMachineBodyDto extends createZodDto(CreateMachineCommand.RequestBodySchema) {}
 export class CreateMachineResponseDto extends createZodDto(CreateMachineCommand.ResponseSchema) {}
 export class GetMachinesResponseDto extends createZodDto(GetMachinesCommand.ResponseSchema) {}
+export class GetMachineControlStatusResponseDto extends createZodDto(
+    GetMachineControlStatusCommand.ResponseSchema,
+) {}
 export class GetMachineParamDto extends createZodDto(GetMachineCommand.RequestParamsSchema) {}
 export class GetMachineResponseDto extends createZodDto(GetMachineCommand.ResponseSchema) {}
 export class RotateMachineEnrollmentTokenParamDto extends createZodDto(

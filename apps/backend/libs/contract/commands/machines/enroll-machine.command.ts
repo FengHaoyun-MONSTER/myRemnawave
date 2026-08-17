@@ -16,6 +16,7 @@ export namespace EnrollMachineCommand {
 
     export const RequestBodySchema = z.object({
         enrollmentToken: z.string().min(40).max(256),
+        attemptId: z.uuid().optional(),
         csrPem: z
             .string()
             .min(100)

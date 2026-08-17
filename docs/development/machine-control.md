@@ -3,24 +3,35 @@
 The Machine Agent uses two separate HTTPS/TLS surfaces:
 
 - enrollment is a public REST endpoint protected by a 256-bit, machine-bound,
-  one-time token with a 15-minute lifetime;
+  one-time token with a 30-minute lifetime;
 - ongoing control uses a dedicated TLS 1.3 WebSocket listener that requires a
   valid client certificate issued by the panel CA.
 
-The Machine generates its own ECDSA P-256 key and sends only a signed CSR. The
+The Machine generates its own ECDSA P-256 key and sends only a signed CSR. It
+persists the key, CSR, and a random attempt ID in a root-only pending directory
+until installation commits. Repeating the exact exchange after response loss
+returns the original certificate; a different CSR or attempt is rejected. The
 panel certificate binds the Machine UUID as the certificate common name and
 stores only its serial, SHA-256 fingerprint, and expiry. The private key never
 leaves the Machine.
 
 ## Backend configuration
 
-Configure all of the following or none of them:
+Set the public URL to enable the listener:
 
 ```dotenv
 MACHINE_CONTROL_PUBLIC_URL=wss://panel.example.com:3010/api/machine-control
+MACHINE_CONTROL_PORT=3010
+```
+
+By default, the backend creates an ephemeral server certificate signed by the
+panel Machine CA with the public URL hostname as a DNS/IP SAN. It is regenerated
+on backend start and never written to disk. An externally managed certificate
+can instead be selected by setting both absolute paths together:
+
+```dotenv
 MACHINE_CONTROL_TLS_CERT_PATH=/run/secrets/machine-control-server.crt
 MACHINE_CONTROL_TLS_KEY_PATH=/run/secrets/machine-control-server.key
-MACHINE_CONTROL_PORT=3010
 ```
 
 The server certificate is the panel control-plane certificate and must cover

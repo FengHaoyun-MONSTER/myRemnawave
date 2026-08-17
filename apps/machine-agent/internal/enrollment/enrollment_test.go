@@ -34,6 +34,7 @@ func TestEnrollKeepsPrivateKeyLocalAndInstallsCredentials(t *testing.T) {
 		defer request.Body.Close()
 		var body struct {
 			EnrollmentToken string `json:"enrollmentToken"`
+			AttemptID       string `json:"attemptId"`
 			CSRPEM          string `json:"csrPem"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
@@ -46,6 +47,9 @@ func TestEnrollKeepsPrivateKeyLocalAndInstallsCredentials(t *testing.T) {
 		}
 		if strings.Contains(body.CSRPEM, "PRIVATE KEY") {
 			t.Errorf("request uploaded a private key")
+		}
+		if !uuidPattern.MatchString(body.AttemptID) {
+			t.Errorf("request did not contain a valid attempt ID")
 		}
 		csrBlock, _ := pem.Decode([]byte(body.CSRPEM))
 		if csrBlock == nil || csrBlock.Type != "CERTIFICATE REQUEST" {
@@ -129,6 +133,116 @@ func TestEnrollKeepsPrivateKeyLocalAndInstallsCredentials(t *testing.T) {
 	if requestCount.Load() != 1 {
 		t.Fatalf("server request count = %d, want 1", requestCount.Load())
 	}
+	if _, err := os.Stat(configDirectory + pendingSuffix); !os.IsNotExist(err) {
+		t.Fatalf("pending enrollment state remains after success: %v", err)
+	}
+}
+
+func TestEnrollResumesWithTheSameKeyAndAttemptAfterResponseLoss(t *testing.T) {
+	t.Parallel()
+	caCertificate, caPrivateKey, caPEM := createTestCA(t)
+	var requestCount atomic.Int32
+	var firstAttemptID, firstCSR string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		defer request.Body.Close()
+		var body struct {
+			EnrollmentToken string `json:"enrollmentToken"`
+			AttemptID       string `json:"attemptId"`
+			CSRPEM          string `json:"csrPem"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if requestCount.Add(1) == 1 {
+			firstAttemptID, firstCSR = body.AttemptID, body.CSRPEM
+			hijacker, ok := writer.(http.Hijacker)
+			if !ok {
+				t.Error("test server does not support hijacking")
+				return
+			}
+			connection, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Errorf("hijack response: %v", err)
+				return
+			}
+			_ = connection.Close()
+			return
+		}
+		if body.AttemptID != firstAttemptID || body.CSRPEM != firstCSR {
+			t.Error("retry did not reuse the persisted enrollment identity")
+			writer.WriteHeader(http.StatusConflict)
+			return
+		}
+		writeTestEnrollmentResponse(t, writer, body.CSRPEM, caCertificate, caPrivateKey, caPEM)
+	}))
+	defer server.Close()
+	endpoint, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configDirectory := filepath.Join(t.TempDir(), "credentials")
+	configuration := Config{
+		Endpoint:  endpoint,
+		Token:     "mrw_enroll_1234567890123456789012345678901234567890",
+		ConfigDir: configDirectory,
+	}
+	if _, err := Enroll(context.Background(), configuration, server.Client()); err == nil {
+		t.Fatal("first enrollment unexpectedly succeeded after response loss")
+	}
+	if _, err := os.Stat(configDirectory + pendingSuffix); err != nil {
+		t.Fatalf("pending enrollment state was not retained: %v", err)
+	}
+	if _, err := Enroll(context.Background(), configuration, server.Client()); err != nil {
+		t.Fatalf("resumed Enroll() error = %v", err)
+	}
+	if requestCount.Load() != 2 {
+		t.Fatalf("server request count = %d, want 2", requestCount.Load())
+	}
+}
+
+func writeTestEnrollmentResponse(
+	t *testing.T,
+	writer http.ResponseWriter,
+	csrPEM string,
+	caCertificate *x509.Certificate,
+	caPrivateKey *ecdsa.PrivateKey,
+	caPEM []byte,
+) {
+	t.Helper()
+	csrBlock, _ := pem.Decode([]byte(csrPEM))
+	if csrBlock == nil {
+		t.Error("missing CSR")
+		writer.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	csr, err := x509.ParseCertificateRequest(csrBlock.Bytes)
+	if err != nil {
+		t.Errorf("parse CSR: %v", err)
+		writer.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	expiresAt := time.Now().Add(90 * 24 * time.Hour).UTC().Truncate(time.Second)
+	leafDER, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber:          big.NewInt(3),
+		Subject:               pkix.Name{CommonName: testMachineUUID},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              expiresAt,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}, caCertificate, csr.PublicKey, caPrivateKey)
+	if err != nil {
+		t.Errorf("sign certificate: %v", err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(writer).Encode(responseEnvelope{Response: response{
+		MachineUUID: testMachineUUID, ClientCertPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})),
+		CACertPEM: string(caPEM), ControlURL: "wss://panel.example.test:3010/api/machine-control", ExpiresAt: expiresAt,
+	}})
 }
 
 func createTestCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey, []byte) {
