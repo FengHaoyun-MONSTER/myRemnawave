@@ -17,8 +17,8 @@ RUN npm ci --prefer-offline --no-audit --no-fund
 COPY apps/frontend/ ./
 COPY apps/backend/libs/contract /opt/backend/libs/contract
 
-ARG PANEL_DOMAIN
-ENV DOMAIN_BACKEND=https://${PANEL_DOMAIN}
+# Production requests use window.location.origin, keeping this image reusable
+# across panel domains. Explicit backend-domain overrides remain disabled.
 ENV DOMAIN_OVERRIDE=0
 ENV NODE_ENV=production
 

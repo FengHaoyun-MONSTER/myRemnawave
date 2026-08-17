@@ -1,0 +1,103 @@
+name: Release Panel Installer
+
+on:
+  push:
+    tags: ['panel-v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate the release tag and source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF_NAME}" =~ ^panel-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main
+          test "$(git tag --points-at "${GITHUB_SHA}" | grep -Fxc "${GITHUB_REF_NAME}")" -eq 1
+
+      - name: Validate release scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -n deploy/panel/install-panel.sh
+          bash -n deploy/panel/test-install-panel.sh
+          bash -n deploy/panel/deploy.sh
+
+      - name: Build the immutable panel image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_tag="myremnawave-panel:${GITHUB_SHA}"
+          build_time="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          app_version="3.2.3-myremnawave.${GITHUB_REF_NAME#panel-v}"
+          docker build --pull \
+            --file deploy/panel/Dockerfile \
+            --tag "${image_tag}" \
+            --build-arg "SOURCE_COMMIT=${GITHUB_SHA}" \
+            --build-arg "BUILD_TIME=${build_time}" \
+            --build-arg "APP_VERSION=${app_version}" \
+            .
+          actual_commit="$(docker image inspect \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "${image_tag}")"
+          [ "${actual_commit}" = "${GITHUB_SHA}" ]
+
+      - name: Create and verify release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets="${RUNNER_TEMP}/panel-release"
+          install -d -m 0700 "${assets}"
+
+          image_asset="${assets}/myremnawave-panel-linux-amd64.tar.gz"
+          docker save "myremnawave-panel:${GITHUB_SHA}" | gzip -1 >"${image_asset}"
+          test -s "${image_asset}"
+
+          git archive \
+            --format=tar.gz \
+            --output="${assets}/myremnawave-panel-source.tar.gz" \
+            "${GITHUB_SHA}"
+          install -m 0755 deploy/panel/install-panel.sh "${assets}/install-panel.sh"
+          {
+            printf 'PANEL_VERSION=%s\n' "${GITHUB_REF_NAME}"
+            printf 'SOURCE_COMMIT=%s\n' "${GITHUB_SHA}"
+          } >"${assets}/panel-release-metadata"
+          (
+            cd "${assets}"
+            sha256sum \
+              myremnawave-panel-linux-amd64.tar.gz \
+              myremnawave-panel-source.tar.gz \
+              panel-release-metadata \
+              >SHA256SUMS
+            sha256sum --check --strict SHA256SUMS
+          )
+          echo "RELEASE_ASSETS=${assets}" >>"${GITHUB_ENV}"
+
+      - name: Publish the immutable panel release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            "${RELEASE_ASSETS}/install-panel.sh" \
+            "${RELEASE_ASSETS}/myremnawave-panel-linux-amd64.tar.gz" \
+            "${RELEASE_ASSETS}/myremnawave-panel-source.tar.gz" \
+            "${RELEASE_ASSETS}/panel-release-metadata" \
+            "${RELEASE_ASSETS}/SHA256SUMS" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Fresh-install panel release for Ubuntu 22.04/24.04 amd64. Assets are versioned and SHA-256 verified by the installer."
