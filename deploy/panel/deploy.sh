@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 readonly DOCKER_APT_KEY_FINGERPRINT='9DC858229FC7DD38854AE2D88D81803C0EBFCD88'
+readonly DOCKER_REGISTRY_MIRROR='https://docker.m.daocloud.io'
 readonly DEFAULT_DEPLOY_ROOT='/opt/myremnawave-panel'
 
 log() {
@@ -93,6 +94,36 @@ EOF
     rm -f "${key_tmp}" "${source_tmp}" "${probe_tmp}"
 }
 
+configure_docker_registry_mirror() {
+    local daemon_config='/etc/docker/daemon.json'
+    local mirror_tmp active_mirrors
+
+    active_mirrors="$(docker info --format '{{json .RegistryConfig.Mirrors}}')"
+    if printf '%s' "${active_mirrors}" | grep -Fq "${DOCKER_REGISTRY_MIRROR}"; then
+        log 'Docker Hub mirror is already configured.'
+        return
+    fi
+    [ ! -e "${daemon_config}" ] \
+        || die 'Existing Docker daemon configuration does not contain the required registry mirror.'
+
+    mirror_tmp="$(mktemp)"
+    trap 'rm -f "${mirror_tmp:-}"' RETURN
+    cat >"${mirror_tmp}" <<EOF
+{
+  "registry-mirrors": ["${DOCKER_REGISTRY_MIRROR}"]
+}
+EOF
+    dockerd --validate --config-file "${mirror_tmp}" >/dev/null
+    install -m 0644 "${mirror_tmp}" "${daemon_config}"
+    systemctl restart docker
+
+    active_mirrors="$(docker info --format '{{json .RegistryConfig.Mirrors}}')"
+    printf '%s' "${active_mirrors}" | grep -Fq "${DOCKER_REGISTRY_MIRROR}" \
+        || die 'Docker Hub mirror configuration did not become active.'
+    trap - RETURN
+    rm -f "${mirror_tmp}"
+}
+
 generate_secret_env() {
     local target="$1" domain="$2"
     local app_secret database_password metrics_password
@@ -157,6 +188,7 @@ main() {
     grep -Fqx "${source_commit}" "${release_dir}/.source-commit" || die 'Release provenance marker mismatch.'
 
     install_docker
+    configure_docker_registry_mirror
     require_command curl
     require_command openssl
 

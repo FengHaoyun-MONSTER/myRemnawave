@@ -15,6 +15,8 @@ development/test server and must not be reused for production.
 - Docker packages come from the official Docker APT repository or its Aliyun
   mirror; both paths require the pinned Docker signing-key fingerprint and APT
   signature verification.
+- Docker Hub pulls use DaoCloud's registry mirror for restricted networks. All
+  production images and the Dockerfile frontend remain pinned by SHA-256 digest.
 - Secrets are generated on the server with mode `0600`; they are not returned to
   GitHub Actions or stored in the repository.
 - PostgreSQL, Valkey, and the panel API have no host-published ports. Only Caddy
