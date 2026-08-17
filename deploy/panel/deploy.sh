@@ -179,6 +179,46 @@ ensure_machine_control_env() {
     chmod 0600 "${target}"
 }
 
+write_deployment_env() {
+    local target="$1" deploy_root="$2" panel_domain="$3" image_commit="$4"
+    local next="${target}.next"
+
+    [[ "${image_commit}" =~ ^[0-9a-f]{40}$ ]] || die 'Panel image commit must be a full Git SHA.'
+    cat >"${next}" <<EOF
+DEPLOY_ROOT=${deploy_root}
+PANEL_DOMAIN=${panel_domain}
+PANEL_IMAGE_TAG=${image_commit}
+EOF
+    chmod 0600 "${next}"
+    mv -f "${next}" "${target}"
+}
+
+prepare_rollback_configuration() {
+    local env_file="$1" deployment_env="$2" previous_release="$3"
+    local deploy_root="$4" panel_domain="$5" previous_commit
+
+    [ -f "${previous_release}/.source-commit" ] \
+        || die 'Previous release provenance marker is missing.'
+    previous_commit="$(tr -d '\r\n' <"${previous_release}/.source-commit")"
+    [[ "${previous_commit}" =~ ^[0-9a-f]{40}$ ]] \
+        || die 'Previous release provenance marker is invalid.'
+
+    # Releases before automatic control-plane TLS require URL, certificate, and
+    # key paths together. Remove values injected by the newer deployer so that
+    # a legacy panel can start in a safe, control-plane-disabled state.
+    if ! grep -q 'MACHINE_CONTROL_PUBLIC_URL=' "${previous_release}/deploy/panel/deploy.sh"; then
+        sed -i \
+            -e '/^MACHINE_CONTROL_PUBLIC_URL=/d' \
+            -e '/^MACHINE_CONTROL_PORT=/d' \
+            "${env_file}"
+    fi
+
+    # Never trust a restored runtime image tag: it may have been left behind by
+    # an earlier failed deployment. The immutable release marker is authoritative.
+    write_deployment_env \
+        "${deployment_env}" "${deploy_root}" "${panel_domain}" "${previous_commit}"
+}
+
 wait_for_service() {
     local container="$1" expected="$2" attempts="$3"
     local state=''
@@ -281,15 +321,10 @@ main() {
 
     install -m 0644 "${release_dir}/deploy/panel/compose.yml" "${deploy_root}/compose.yml.next"
     install -m 0644 "${release_dir}/deploy/panel/Caddyfile" "${deploy_root}/Caddyfile.next"
-    cat >"${deploy_root}/.deployment.env.next" <<EOF
-DEPLOY_ROOT=${deploy_root}
-PANEL_DOMAIN=${panel_domain}
-PANEL_IMAGE_TAG=${source_commit}
-EOF
-    chmod 0600 "${deploy_root}/.deployment.env.next"
     mv -f "${deploy_root}/compose.yml.next" "${deploy_root}/compose.yml"
     mv -f "${deploy_root}/Caddyfile.next" "${deploy_root}/Caddyfile"
-    mv -f "${deploy_root}/.deployment.env.next" "${deploy_root}/.deployment.env"
+    write_deployment_env \
+        "${deploy_root}/.deployment.env" "${deploy_root}" "${panel_domain}" "${source_commit}"
 
     local compose=(docker compose --project-name myremnawave --env-file "${deploy_root}/.env" --env-file "${deploy_root}/.deployment.env" --file "${deploy_root}/compose.yml")
     "${compose[@]}" config --quiet
@@ -308,15 +343,12 @@ EOF
             mv -f "${deploy_root}/${file}.rollback" "${deploy_root}/${file}"
         done
 
-        # Releases before the integrated Machine control listener reject a URL
-        # unless legacy certificate paths are also present. Remove only the two
-        # variables introduced by this deployment when rolling back to one of them.
-        if ! grep -q 'MACHINE_CONTROL_PUBLIC_URL=' "${previous_release}/deploy/panel/deploy.sh"; then
-            sed -i \
-                -e '/^MACHINE_CONTROL_PUBLIC_URL=/d' \
-                -e '/^MACHINE_CONTROL_PORT=/d' \
-                "${deploy_root}/.env"
-        fi
+        prepare_rollback_configuration \
+            "${deploy_root}/.env" \
+            "${deploy_root}/.deployment.env" \
+            "${previous_release}" \
+            "${deploy_root}" \
+            "${panel_domain}"
         chmod 0600 "${deploy_root}/.env" "${deploy_root}/.deployment.env"
 
         local rollback_compose=(docker compose --project-name myremnawave --env-file "${deploy_root}/.env" --env-file "${deploy_root}/.deployment.env" --file "${deploy_root}/compose.yml")
@@ -411,4 +443,6 @@ EOF
     log "Deployment completed for source commit ${source_commit}."
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

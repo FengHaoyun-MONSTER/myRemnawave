@@ -11,7 +11,7 @@ export namespace GetMachineControlStatusCommand {
         MACHINES_ROUTES.GET_CONTROL_STATUS,
         'get',
         'Get Machine Agent control-plane readiness',
-        { scope: 'list', kind: 'read' },
+        { scope: 'control-status', kind: 'read' },
     );
 
     export const ResponseSchema = z.object({

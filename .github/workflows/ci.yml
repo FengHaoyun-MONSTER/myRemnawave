@@ -128,6 +128,7 @@ jobs:
           sh -n deploy/panel/install-panel.sh
           bash -n deploy/panel/test-install-panel.sh
           bash -n deploy/panel/deploy.sh
+          bash -n deploy/panel/test-deploy-rollback.sh
           sh deploy/panel/install-panel.sh --help 2>&1 | grep -F 'panel-vX.Y.Z'
 
           invalid_output="$(mktemp)"
@@ -159,6 +160,8 @@ jobs:
           -v "${PWD}:/repo:ro"
           ubuntu:24.04@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea
           bash /repo/deploy/panel/test-install-panel.sh
+      - name: Exercise deployment rollback safety behavior
+        run: bash deploy/panel/test-deploy-rollback.sh
       - name: Run ShellCheck
         run: >-
           docker run --rm
@@ -167,6 +170,7 @@ jobs:
           deploy/panel/install-panel.sh
           deploy/panel/test-install-panel.sh
           deploy/panel/deploy.sh
+          deploy/panel/test-deploy-rollback.sh
       - name: Run actionlint
         run: >-
           docker run --rm
