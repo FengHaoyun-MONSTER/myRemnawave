@@ -23,7 +23,7 @@ vi.mock('@common/utils/certs/generate-machine-client-cert.util', () => ({
 }));
 import { MachinesRepository } from './repositories/machines.repository';
 
-const TOKEN = 'mrw_enroll_1234567890123456789012345678901234567890';
+const TOKEN = `mrw_enroll_${'test-token-'.repeat(5)}`;
 const ATTEMPT_ID = '123e4567-e89b-42d3-a456-426614174000';
 const CSR = 'persisted-csr';
 
