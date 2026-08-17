@@ -1,0 +1,139 @@
+name: Probe Test Panel Server
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PANEL_DOMAIN: alipaneltest.thinderbox.com
+      SSH_HOST: ${{ secrets.DEV_SERVICE_IP }}
+      SSH_PORT: ${{ secrets.DEV_SERVICE_SSH_PORT }}
+      SSH_USER: ${{ secrets.DEV_SERVICE_SSH_USER }}
+      SSHPASS: ${{ secrets.DEV_SERVICE_SSH_PASWARD }}
+      SSH_HOST_KEY_SHA256: ${{ secrets.DEV_SERVICE_SSH_HOST_KEY_SHA256 }}
+    steps:
+      - name: Validate deployment inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SSH_HOST}"
+          test -n "${SSH_USER}"
+          test -n "${SSHPASS}"
+          test -n "${SSH_HOST_KEY_SHA256}"
+          case "${SSH_PORT}" in
+            ''|*[!0-9]*) echo 'SSH port must be numeric' >&2; exit 1 ;;
+          esac
+          test "${SSH_PORT}" -ge 1
+          test "${SSH_PORT}" -le 65535
+          case "${SSH_HOST_KEY_SHA256}" in
+            SHA256:*) ;;
+            *) echo 'SSH host key fingerprint must use SHA256:... format' >&2; exit 1 ;;
+          esac
+
+      - name: Install SSH password helper
+        run: |
+          sudo apt-get update
+          sudo apt-get install --assume-yes --no-install-recommends sshpass
+
+      - name: Verify DNS points to the SSH server
+        shell: bash
+        run: |
+          set -euo pipefail
+          panel_ips="$(mktemp)"
+          server_ips="$(mktemp)"
+          trap 'rm -f "${panel_ips}" "${server_ips}"' EXIT
+          getent ahostsv4 "${PANEL_DOMAIN}" | awk '{ print $1 }' | sort -u > "${panel_ips}"
+          getent ahostsv4 "${SSH_HOST}" | awk '{ print $1 }' | sort -u > "${server_ips}"
+          test -s "${panel_ips}"
+          test -s "${server_ips}"
+          if ! comm -12 "${panel_ips}" "${server_ips}" | grep -q .; then
+            echo 'Panel domain does not resolve to the configured test server' >&2
+            exit 1
+          fi
+          echo 'Panel DNS matches the configured test server.'
+
+      - name: Verify SSH host identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "${HOME}/.ssh"
+          scanned="$(mktemp)"
+          trap 'rm -f "${scanned}"' EXIT
+          for _ in 1 2 3 4 5; do
+            if ssh-keyscan -p "${SSH_PORT}" -t ed25519 "${SSH_HOST}" > "${scanned}" 2>/dev/null && test -s "${scanned}"; then
+              break
+            fi
+            sleep 2
+          done
+          test -s "${scanned}"
+          actual="$(ssh-keygen -lf "${scanned}" -E sha256 | awk '{ print $2 }' | sort -u)"
+          expected="$(printf '%s' "${SSH_HOST_KEY_SHA256}" | tr -d '\r\n')"
+          test "$(printf '%s\n' "${actual}" | sed '/^$/d' | wc -l)" -eq 1
+          if [ "${actual}" != "${expected}" ]; then
+            echo 'SSH host key fingerprint mismatch' >&2
+            exit 1
+          fi
+          install -m 0600 "${scanned}" "${HOME}/.ssh/known_hosts"
+          echo 'SSH host identity verified.'
+
+      - name: Inspect test server without changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          sshpass -e ssh \
+            -p "${SSH_PORT}" \
+            -o BatchMode=no \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+            "${SSH_USER}@${SSH_HOST}" 'sh -s' <<'REMOTE'
+          set -eu
+          echo "REMOTE_UID=$(id -u)"
+          echo "REMOTE_ARCH=$(uname -m)"
+          if [ -r /etc/os-release ]; then
+            . /etc/os-release
+            echo "REMOTE_OS=${ID:-unknown} ${VERSION_ID:-unknown}"
+          fi
+          if command -v docker >/dev/null 2>&1; then
+            echo 'DOCKER_INSTALLED=yes'
+            docker --version || true
+            docker compose version || true
+            if docker info >/dev/null 2>&1; then
+              echo 'DOCKER_ACCESS=yes'
+              docker ps --format 'CONTAINER={{.Names}} IMAGE={{.Image}} STATUS={{.Status}} PORTS={{.Ports}}'
+            else
+              echo 'DOCKER_ACCESS=no'
+            fi
+          else
+            echo 'DOCKER_INSTALLED=no'
+          fi
+          if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+            echo 'PASSWORDLESS_SUDO=yes'
+          else
+            echo 'PASSWORDLESS_SUDO=no'
+          fi
+          df -Pk / | awk 'NR == 2 { print "ROOT_DISK_KB_FREE=" $4 }'
+          if command -v free >/dev/null 2>&1; then
+            free -m | awk '/^Mem:/ { print "MEMORY_MB_TOTAL=" $2; print "MEMORY_MB_AVAILABLE=" $7 }'
+          fi
+          for path in /opt/remnawave /opt/myremnawave-panel; do
+            if [ -e "${path}" ]; then
+              echo "EXISTING_PATH=${path}"
+            fi
+          done
+          if command -v ss >/dev/null 2>&1; then
+            for port in 80 443 3000 3001 5432 6379; do
+              if ss -ltnH "sport = :${port}" 2>/dev/null | grep -q .; then
+                echo "TCP_PORT_${port}=in-use"
+              else
+                echo "TCP_PORT_${port}=free"
+              fi
+            done
+          fi
+          REMOTE
