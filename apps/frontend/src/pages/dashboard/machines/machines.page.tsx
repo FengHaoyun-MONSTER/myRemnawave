@@ -190,7 +190,7 @@ export function MachinesPage() {
         const backend = String(getBackendDomain()).replace(/\/$/, '')
         const endpoint = `${backend}/api/machine-enrollment`
         const installer = `https://raw.githubusercontent.com/FengHaoyun-MONSTER/myRemnawave/${AGENT_VERSION}/apps/machine-agent/install.sh`
-        return `curl -fsSL ${shellQuote(installer)} | sudo sh -s -- --version ${shellQuote(AGENT_VERSION)} --panel-url ${shellQuote(endpoint)} --token ${shellQuote(wizardMachine.enrollmentToken)}`
+        return `curl -fsSL ${shellQuote(installer)} | sh -s -- --version ${shellQuote(AGENT_VERSION)} --panel-url ${shellQuote(endpoint)} --token ${shellQuote(wizardMachine.enrollmentToken)}`
     }, [wizardMachine])
 
     const buildProvisionRequest = (): ProvisionMachineCommand.RequestBody | null => {
