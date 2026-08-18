@@ -34,6 +34,38 @@ type ownershipRunner struct {
 	labels string
 }
 
+type bindRaceRunner struct {
+	calls       [][]string
+	runAttempts int
+	failedTwice bool
+	created     bool
+}
+
+func (f *bindRaceRunner) Run(_ context.Context, arguments ...string) ([]byte, error) {
+	f.calls = append(f.calls, append([]string(nil), arguments...))
+	if len(arguments) >= 2 && arguments[0] == "network" && arguments[1] == "inspect" {
+		return nil, errors.New("not found")
+	}
+	if len(arguments) > 0 && arguments[0] == "inspect" {
+		if !f.created {
+			return nil, errors.New("not found")
+		}
+		return []byte(`{"io.myremnawave.managed":"true","io.myremnawave.instance":"123e4567-e89b-42d3-a456-426614174000","io.myremnawave.machine":"123e4567-e89b-42d3-a456-426614174999"}`), nil
+	}
+	if len(arguments) > 0 && arguments[0] == "run" {
+		f.runAttempts++
+		if f.runAttempts == 1 || f.failedTwice {
+			f.created = true
+			return []byte("Bind for 0.0.0.0 failed: port is already allocated"), errors.New("docker run failed")
+		}
+		return []byte("container-id"), nil
+	}
+	if len(arguments) > 0 && arguments[0] == "rm" {
+		f.created = false
+	}
+	return []byte("ok"), nil
+}
+
 func (f *ownershipRunner) Run(_ context.Context, arguments ...string) ([]byte, error) {
 	f.calls = append(f.calls, append([]string(nil), arguments...))
 	if len(arguments) >= 2 && arguments[0] == "network" && arguments[1] == "inspect" {
@@ -162,6 +194,61 @@ func TestReconcileStopsBeforeMutationWhenPortPoolIsExhausted(t *testing.T) {
 	}
 }
 
+func TestReconcileRetriesOnePortAfterDockerBindRace(t *testing.T) {
+	runner := &bindRaceRunner{}
+	request := Request{
+		InstanceID:    "123e4567-e89b-42d3-a456-426614174000",
+		Protocol:      "VLESS_REALITY",
+		Image:         "remnawave/node@sha256:" + strings.Repeat("a", 64),
+		ControlPort:   2222,
+		ExternalPort:  443,
+		FallbackPorts: []uint16{8443, 2053},
+		Network:       "tcp",
+		SecretKey:     strings.Repeat("A", 120),
+	}
+	payload, _ := json.Marshal(request)
+	resultValue, err := (Handler{
+		ManagedRoot: t.TempDir(),
+		MachineID:   "123e4567-e89b-42d3-a456-426614174999",
+		Runner:      runner,
+		Probe:       fakePortProbe{available: map[uint16]bool{443: true, 8443: true}},
+	}).Execute(context.Background(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := resultValue.(Result)
+	if result.ExternalPort != 8443 || runner.runAttempts != 2 {
+		t.Fatalf("unexpected bounded replan result: %#v, attempts=%d", result, runner.runAttempts)
+	}
+}
+
+func TestReconcileStopsAfterOneDockerBindRaceRetry(t *testing.T) {
+	runner := &bindRaceRunner{failedTwice: true}
+	request := Request{
+		InstanceID:    "123e4567-e89b-42d3-a456-426614174000",
+		Protocol:      "VLESS_REALITY",
+		Image:         "remnawave/node@sha256:" + strings.Repeat("a", 64),
+		ControlPort:   2222,
+		ExternalPort:  443,
+		FallbackPorts: []uint16{8443, 2053},
+		Network:       "tcp",
+		SecretKey:     strings.Repeat("A", 120),
+	}
+	payload, _ := json.Marshal(request)
+	_, err := (Handler{
+		ManagedRoot: t.TempDir(),
+		MachineID:   "123e4567-e89b-42d3-a456-426614174999",
+		Runner:      runner,
+		Probe:       fakePortProbe{available: map[uint16]bool{443: true, 8443: true, 2053: true}},
+	}).Execute(context.Background(), payload)
+	if err == nil || !strings.Contains(err.Error(), "PORT_BIND_RACE_EXHAUSTED") {
+		t.Fatalf("expected bounded bind-race failure, got %v", err)
+	}
+	if runner.runAttempts != 2 {
+		t.Fatalf("docker run attempts = %d, want exactly 2", runner.runAttempts)
+	}
+}
+
 func TestRejectsUnpinnedImage(t *testing.T) {
 	request := Request{
 		InstanceID:   "123e4567-e89b-42d3-a456-426614174000",
@@ -174,6 +261,21 @@ func TestRejectsUnpinnedImage(t *testing.T) {
 	}
 	if err := validate(request); err == nil {
 		t.Fatal("expected unpinned image to be rejected")
+	}
+}
+
+func TestRejectsReservedControlPortAsExternalCandidate(t *testing.T) {
+	request := Request{
+		InstanceID:   "123e4567-e89b-42d3-a456-426614174000",
+		Protocol:     "VLESS_REALITY",
+		Image:        "remnawave/node@sha256:" + strings.Repeat("a", 64),
+		ControlPort:  2222,
+		ExternalPort: 2223,
+		Network:      "tcp",
+		SecretKey:    strings.Repeat("A", 120),
+	}
+	if err := validate(request); err == nil {
+		t.Fatal("expected reserved control port to be rejected")
 	}
 }
 

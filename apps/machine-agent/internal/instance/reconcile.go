@@ -157,13 +157,42 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 		}
 	}
 
-	arguments := []string{
+	arguments := dockerRunArguments(request, containerName, instanceDir, certDir, hash, h.MachineID)
+	if output, err := runner.Run(ctx, arguments...); err != nil {
+		if containerExists || !isPortBindConflict(output, err) {
+			return nil, commandError("CONTAINER_RUN_FAILED", output, err)
+		}
+		if cleanupErr := removeFailedOwnedContainer(ctx, runner, containerName, h.MachineID, request.InstanceID); cleanupErr != nil {
+			return nil, cleanupErr
+		}
+		retryPort, retryErr := selectExternalPortExcluding(ctx, h.portProbe(), request, request.ExternalPort)
+		if retryErr != nil {
+			return nil, errors.New("PORT_BIND_RACE_EXHAUSTED: no fallback port remained after the Docker bind race")
+		}
+		request.ExternalPort = retryPort
+		hash = desiredHash(request)
+		arguments = dockerRunArguments(request, containerName, instanceDir, certDir, hash, h.MachineID)
+		if retryOutput, retryRunErr := runner.Run(ctx, arguments...); retryRunErr != nil {
+			if cleanupErr := removeFailedOwnedContainer(ctx, runner, containerName, h.MachineID, request.InstanceID); cleanupErr != nil {
+				return nil, cleanupErr
+			}
+			if isPortBindConflict(retryOutput, retryRunErr) {
+				return nil, errors.New("PORT_BIND_RACE_EXHAUSTED: the single fallback bind attempt also conflicted")
+			}
+			return nil, commandError("CONTAINER_RUN_FAILED", retryOutput, retryRunErr)
+		}
+	}
+	return Result{InstanceID: request.InstanceID, ContainerName: containerName, ConfigHash: hash, ExternalPort: request.ExternalPort, RealityPublicKey: publicKey, RealityShortID: shortID}, nil
+}
+
+func dockerRunArguments(request Request, containerName, instanceDir, certDir, hash, machineID string) []string {
+	return []string{
 		"run", "-d", "--name", containerName,
 		"--restart", "unless-stopped",
 		"--network", managedNetwork,
 		"--add-host", "host.docker.internal:host-gateway",
 		"--label", managedLabel + "=true",
-		"--label", machineLabel + "=" + h.MachineID,
+		"--label", machineLabel + "=" + machineID,
 		"--label", instanceLabel + "=" + request.InstanceID,
 		"--label", configHashLabel + "=" + hash,
 		"--env-file", filepath.Join(instanceDir, "node.env"),
@@ -172,10 +201,6 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 		"--publish", fmt.Sprintf("%d:%d/%s", request.ExternalPort, request.ExternalPort, request.Network),
 		request.Image,
 	}
-	if output, err := runner.Run(ctx, arguments...); err != nil {
-		return nil, commandError("CONTAINER_RUN_FAILED", output, err)
-	}
-	return Result{InstanceID: request.InstanceID, ContainerName: containerName, ConfigHash: hash, ExternalPort: request.ExternalPort, RealityPublicKey: publicKey, RealityShortID: shortID}, nil
 }
 
 func (h Handler) portProbe() PortProbe {
@@ -194,6 +219,42 @@ func selectExternalPort(ctx context.Context, probe PortProbe, request Request) (
 		}
 	}
 	return 0, errors.New("PORT_POOL_EXHAUSTED: no requested external port is available")
+}
+
+func selectExternalPortExcluding(ctx context.Context, probe PortProbe, request Request, excluded uint16) (uint16, error) {
+	ports := append([]uint16{request.ExternalPort}, request.FallbackPorts...)
+	for _, port := range ports {
+		if port == excluded {
+			continue
+		}
+		available, _ := probe.Available(ctx, request.Network, port)
+		if available {
+			return port, nil
+		}
+	}
+	return 0, errors.New("no remaining external port is available")
+}
+
+func isPortBindConflict(output []byte, err error) bool {
+	message := strings.ToLower(strings.TrimSpace(string(output)) + " " + err.Error())
+	return strings.Contains(message, "port is already allocated") ||
+		strings.Contains(message, "address already in use") ||
+		strings.Contains(message, "failed to bind port") ||
+		(strings.Contains(message, "bind for") && strings.Contains(message, "failed"))
+}
+
+func removeFailedOwnedContainer(ctx context.Context, runner Runner, name, machineID, instanceID string) error {
+	exists, _, err := inspectContainer(ctx, runner, name, machineID, instanceID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	if output, err := runner.Run(ctx, "rm", name); err != nil {
+		return commandError("CONTAINER_REMOVE_FAILED", output, err)
+	}
+	return nil
 }
 
 func decode(payload json.RawMessage) (Request, error) {
@@ -225,6 +286,9 @@ func validate(request Request) error {
 	if request.ExternalPort == 0 {
 		return errors.New("externalPort is required")
 	}
+	if request.ExternalPort >= 2222 && request.ExternalPort <= 2224 {
+		return errors.New("external ports 2222-2224 are reserved for local control")
+	}
 	if len(request.FallbackPorts) > 15 {
 		return errors.New("at most fifteen fallback ports are allowed")
 	}
@@ -232,6 +296,9 @@ func validate(request Request) error {
 	for _, port := range request.FallbackPorts {
 		if port == 0 {
 			return errors.New("fallback ports must be between 1 and 65535")
+		}
+		if port >= 2222 && port <= 2224 {
+			return errors.New("fallback ports 2222-2224 are reserved for local control")
 		}
 		if _, duplicate := seenPorts[port]; duplicate {
 			return errors.New("fallback ports must be unique")

@@ -65,6 +65,24 @@ export const configSchema = z
             .default('3010')
             .transform((port) => parseInt(port, 10))
             .refine((port) => port > 0 && port <= 65535, 'Port must be between 1 and 65535'),
+        MACHINE_PORT_CANDIDATES: z
+            .string()
+            .default('443,8443,2053,2083,2087,2096,2443,9443')
+            .transform((value) => value.split(',').map((port) => Number(port.trim())))
+            .pipe(
+                z
+                    .array(z.int().min(1).max(65535))
+                    .min(1)
+                    .max(15)
+                    .refine(
+                        (ports) => new Set(ports).size === ports.length,
+                        'Machine port candidates must be unique',
+                    )
+                    .refine(
+                        (ports) => ports.every((port) => ![2222, 2223, 2224].includes(port)),
+                        'Machine control ports 2222-2224 are reserved',
+                    ),
+            ),
         METRICS_USER: z.string().min(1),
         METRICS_PASS: z.string().min(1),
         SUB_PUBLIC_DOMAIN: z.string(),

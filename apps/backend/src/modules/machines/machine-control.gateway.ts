@@ -351,7 +351,7 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
             state.helloReceived = true;
             await this.machinesRepository.resetRunningCommands(state.machineUuid);
             await this.machinesRepository.ensureInventoryCommand(state.machineUuid, new Date());
-            await this.machinesRepository.ensureWarpCommand(state.machineUuid, new Date());
+            await this.machinesRepository.ensureWarpCommand(state.machineUuid, new Date(), true);
             await this.sendReadyCommands(webSocket, state.machineUuid);
             return;
         }
@@ -382,7 +382,9 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
                 : commandKind === 'inventory'
                   ? inventorySchema.parse(result.payload)
                   : commandKind === 'discover_host'
-                    ? MachineProvisioningPlanResultSchema.parse(result.payload)
+                    ? sanitizeProvisioningPlanResult(
+                          MachineProvisioningPlanResultSchema.parse(result.payload),
+                      )
                     : commandKind === 'reconcile_dependency'
                       ? reconcileDependencyResultSchema.parse(result.payload)
                       : commandKind === 'preflight'
@@ -519,4 +521,33 @@ function sanitizeAgentMessage(message: string | undefined): string | undefined {
             '$1[REDACTED]',
         );
     return redacted.slice(0, 1024);
+}
+
+function sanitizeProvisioningPlanResult(
+    result: z.infer<typeof MachineProvisioningPlanResultSchema>,
+): z.infer<typeof MachineProvisioningPlanResultSchema> {
+    const safeMessage = (message: string): string => sanitizeAgentMessage(message) ?? '';
+    return {
+        ...result,
+        machineChecks: result.machineChecks.map((check) => ({
+            ...check,
+            message: safeMessage(check.message),
+        })),
+        dependencies: result.dependencies.map((dependency) => ({
+            ...dependency,
+            message: safeMessage(dependency.message),
+        })),
+        protocols: result.protocols.map((protocol) => ({
+            ...protocol,
+            ...(protocol.message ? { message: safeMessage(protocol.message) } : {}),
+            checks: protocol.checks.map((check) => ({
+                ...check,
+                message: safeMessage(check.message),
+            })),
+            portAttempts: protocol.portAttempts.map((attempt) => ({
+                ...attempt,
+                message: safeMessage(attempt.message),
+            })),
+        })),
+    };
 }

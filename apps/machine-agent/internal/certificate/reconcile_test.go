@@ -35,11 +35,17 @@ func TestImportExistingCertificate(t *testing.T) {
 		InstanceID:      "123e4567-e89b-42d3-a456-426614174000",
 		Mode:            "IMPORT_EXISTING",
 		Domain:          "node.example.com",
+		ExpectedAddress: "203.0.113.10",
 		CertificatePath: certificatePath,
 		PrivateKeyPath:  keyPath,
 	}
 	payload, _ := json.Marshal(request)
-	result, err := (Handler{ManagedRoot: root}).Execute(context.Background(), payload)
+	result, err := (Handler{
+		ManagedRoot: root,
+		Resolver: staticResolver{
+			"node.example.com": {{IP: net.ParseIP("203.0.113.10")}},
+		},
+	}).Execute(context.Background(), payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +59,31 @@ func TestImportExistingCertificate(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("private key permissions = %o", info.Mode().Perm())
+	}
+}
+
+func TestImportExistingCertificateStopsBeforeCopyOnDNSMismatch(t *testing.T) {
+	root := t.TempDir()
+	request := Request{
+		InstanceID:      "123e4567-e89b-42d3-a456-426614174000",
+		Mode:            "IMPORT_EXISTING",
+		Domain:          "node.example.com",
+		ExpectedAddress: "203.0.113.11",
+		CertificatePath: filepath.Join(root, "source.crt"),
+		PrivateKeyPath:  filepath.Join(root, "source.key"),
+	}
+	payload, _ := json.Marshal(request)
+	_, err := (Handler{
+		ManagedRoot: root,
+		Resolver: staticResolver{
+			"node.example.com": {{IP: net.ParseIP("203.0.113.10")}},
+		},
+	}).Execute(context.Background(), payload)
+	if err == nil {
+		t.Fatal("expected imported certificate DNS mismatch")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "instances", request.InstanceID)); !os.IsNotExist(statErr) {
+		t.Fatalf("managed certificate directory changed before DNS validation: %v", statErr)
 	}
 }
 

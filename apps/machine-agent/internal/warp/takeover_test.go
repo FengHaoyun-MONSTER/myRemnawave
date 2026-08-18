@@ -73,6 +73,32 @@ func TestTakeoverRequiresExplicitAttestation(t *testing.T) {
 	}
 }
 
+func TestTakeoverRefusesIncompleteManagedOwnership(t *testing.T) {
+	root := t.TempDir()
+	if err := createOwnership(root, Ownership{
+		Version:   1,
+		MachineID: testMachineID,
+		State:     "INSTALLING",
+	}); err != nil {
+		t.Fatalf("seed ownership: %v", err)
+	}
+	handler := TakeoverHandler{
+		ManagedRoot: root,
+		MachineID:   testMachineID,
+		LookupPath: func(string) (string, error) {
+			return "/usr/bin/warp-cli", nil
+		},
+		Detect3XUI: func(context.Context) (bool, string, error) {
+			return false, "no 3X-UI indicators detected", nil
+		},
+	}
+
+	_, err := handler.Execute(context.Background(), takeoverPayload(true))
+	if err == nil || !strings.Contains(err.Error(), "WARP_TAKEOVER_NOT_APPLICABLE") {
+		t.Fatalf("expected incomplete ownership refusal, got %v", err)
+	}
+}
+
 func takeoverPayload(attested bool) json.RawMessage {
 	payload, _ := json.Marshal(TakeoverRequest{
 		PlanID:            testPlanID,

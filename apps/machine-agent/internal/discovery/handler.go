@@ -47,6 +47,8 @@ type Handler struct {
 	ManagedRoot string
 	MachineID   string
 	Probe       PortProbe
+	Resolver    IPResolver
+	ReadOnly    ReadOnlyRunner
 }
 
 func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, error) {
@@ -54,7 +56,7 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 	if err != nil {
 		return nil, fmt.Errorf("INVALID_DISCOVERY_PAYLOAD: %w", err)
 	}
-	portResult, err := Plan(ctx, request, h.portProbe())
+	portResult, err := planWithDNS(ctx, request, h.portProbe(), h.Resolver)
 	if err != nil {
 		return nil, fmt.Errorf("INVALID_DISCOVERY_PAYLOAD: %w", err)
 	}
@@ -62,22 +64,24 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 	if err != nil {
 		return nil, fmt.Errorf("INVENTORY_FAILED: %w", err)
 	}
+	readOnly := h.ReadOnly
+	if readOnly == nil {
+		readOnly = OSReadOnlyRunner{}
+	}
 	machineChecks := []Check{
 		operatingSystemCheck(system),
 		{Code: "MEMORY_AVAILABLE", OK: system.MemoryBytes >= minimumMemoryBytes, Message: fmt.Sprintf("%d bytes total; at least %d required", system.MemoryBytes, minimumMemoryBytes)},
 		{Code: "DISK_AVAILABLE", OK: system.DiskFreeBytes >= minimumDiskFreeBytes, Message: fmt.Sprintf("%d bytes free; at least %d required", system.DiskFreeBytes, minimumDiskFreeBytes)},
 		commandAvailableCheck(ctx, "SYSTEMD_AVAILABLE", "systemctl", "--version"),
+		clockSynchronizationCheck(ctx, readOnly),
+		hostFirewallRiskCheck(ctx, readOnly),
+		cloudSecurityGroupRiskCheck(),
 	}
 	dockerCheck, dockerDependency := inspectDocker(ctx, h.ManagedRoot, h.MachineID)
 	machineChecks = append(machineChecks, dockerCheck)
 	warpCheck, warpDependency := inspectWARP(ctx, h.ManagedRoot, h.MachineID, request.WarpRequired)
 	machineChecks = append(machineChecks, warpCheck)
-	machineReady := true
-	for _, check := range machineChecks {
-		if !check.OK {
-			machineReady = false
-		}
-	}
+	machineReady := machineChecksReady(machineChecks)
 	readyProtocols := 0
 	for _, planned := range portResult.Protocols {
 		if planned.Status == ProtocolReady {
@@ -93,6 +97,15 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 		MachineReady:  machineReady,
 		Ready:         machineReady && readyProtocols > 0,
 	}, nil
+}
+
+func machineChecksReady(checks []Check) bool {
+	for _, check := range checks {
+		if !check.OK && !check.Advisory {
+			return false
+		}
+	}
+	return true
 }
 
 func inspectWARP(ctx context.Context, managedRoot, machineID string, required bool) (Check, Dependency) {

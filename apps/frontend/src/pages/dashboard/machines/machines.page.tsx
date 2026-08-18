@@ -76,10 +76,10 @@ export function MachinesPage() {
     const [clock, setClock] = useState(() => Date.now())
 
     useEffect(() => {
-        if (!wizardMachine?.enrollmentToken) return
+        if (!wizardMachine) return
         const timer = window.setInterval(() => setClock(Date.now()), 1_000)
         return () => window.clearInterval(timer)
-    }, [wizardMachine?.enrollmentToken])
+    }, [wizardMachine?.machine.uuid])
 
     const [name, setName] = useState('')
     const [address, setAddress] = useState('')
@@ -101,6 +101,7 @@ export function MachinesPage() {
     const [hysteriaCertificatePath, setHysteriaCertificatePath] = useState('')
     const [hysteriaPrivateKeyPath, setHysteriaPrivateKeyPath] = useState('')
     const [hysteriaPort, setHysteriaPort] = useState(443)
+    const [fallbackPortPool, setFallbackPortPool] = useState('')
     const [enableWarp, setEnableWarp] = useState(true)
     const [selectedSquads, setSelectedSquads] = useState<string[]>([])
 
@@ -285,11 +286,14 @@ export function MachinesPage() {
     }, [wizardMachine])
 
     const buildProvisionRequest = (): ProvisionMachineCommand.RequestBody | null => {
+        const fallbackPorts = parseFallbackPorts(fallbackPortPool)
+        if (fallbackPorts === null) return null
         const requested: ProvisionMachineCommand.RequestBody['protocols'] = []
         if (protocols.VLESS_REALITY) {
             requested.push({
                 protocol: 'VLESS_REALITY',
                 externalPort: realityPort,
+                ...(fallbackPorts ? { fallbackPorts } : {}),
                 serverName: realityServerName,
                 target: realityTarget
             })
@@ -298,6 +302,7 @@ export function MachinesPage() {
             requested.push({
                 protocol: 'VLESS_TLS_VISION',
                 externalPort: tlsPort,
+                ...(fallbackPorts ? { fallbackPorts } : {}),
                 certificate:
                     tlsCertificateMode === 'HTTP_01'
                         ? {
@@ -317,6 +322,7 @@ export function MachinesPage() {
             requested.push({
                 protocol: 'HYSTERIA2',
                 externalPort: hysteriaPort,
+                ...(fallbackPorts ? { fallbackPorts } : {}),
                 certificate:
                     hysteriaCertificateMode === 'HTTP_01'
                         ? {
@@ -369,7 +375,11 @@ export function MachinesPage() {
     if (isLoading) return <LoadingScreen />
 
     const provisionRequest = buildProvisionRequest()
-    const agentConnected = Boolean(currentMachine?.agentCapabilities.length)
+    const agentConnected = Boolean(
+        currentMachine?.agentCapabilities.length &&
+        currentMachine.agentLastSeenAt &&
+        clock - currentMachine.agentLastSeenAt.getTime() <= 2 * 60_000
+    )
     const selectedCount = Object.values(protocols).filter(Boolean).length
     const enrollmentRemaining = wizardMachine?.enrollmentExpiresAt
         ? Math.max(0, wizardMachine.enrollmentExpiresAt.getTime() - clock)
@@ -435,7 +445,7 @@ export function MachinesPage() {
                                 <Group justify="space-between">
                                     <Text c="dimmed" size="xs">
                                         Agent {machine.agentVersion ?? 'not enrolled'} · WARP{' '}
-                                        {machine.warpStatus}
+                                        {machine.warpStatus} · {machine.warpOwnership}
                                     </Text>
                                     {machine.lastStatusMessage && (
                                         <Text c="red" size="xs">
@@ -490,27 +500,31 @@ export function MachinesPage() {
                                 value={countryCode}
                             />
                             <Group justify="space-between">
-                                {machineNodes.length < 3 && (
+                                {wizardMachine && machineNodes.length < 3 && (
                                     <Button onClick={configureMissingProtocols} variant="subtle">
                                         Add missing protocol
                                     </Button>
                                 )}
-                                <Button
-                                    disabled={name.trim().length < 3 || address.trim().length < 2}
-                                    loading={isCreating}
-                                    onClick={() =>
-                                        createMachine({
-                                            variables: {
-                                                name,
-                                                address,
-                                                countryCode,
-                                                tags: []
-                                            }
-                                        })
-                                    }
-                                >
-                                    Create draft
-                                </Button>
+                                {!wizardMachine && (
+                                    <Button
+                                        disabled={
+                                            name.trim().length < 3 || address.trim().length < 2
+                                        }
+                                        loading={isCreating}
+                                        onClick={() =>
+                                            createMachine({
+                                                variables: {
+                                                    name,
+                                                    address,
+                                                    countryCode,
+                                                    tags: []
+                                                }
+                                            })
+                                        }
+                                    >
+                                        Create draft
+                                    </Button>
+                                )}
                             </Group>
                         </Stack>
                     </Stepper.Step>
@@ -593,6 +607,18 @@ export function MachinesPage() {
                                 private keys never leave that server. Certificate directories remain
                                 node-specific even though templates are shared.
                             </Alert>
+                            <TextInput
+                                description="Optional comma-separated override for this Machine. Leave empty to use the panel-wide deterministic fallback order."
+                                error={
+                                    parseFallbackPorts(fallbackPortPool) === null
+                                        ? 'Use 1-15 unique ports from 1-65535; 2222-2224 are reserved.'
+                                        : undefined
+                                }
+                                label="Fallback port pool"
+                                onChange={(event) => setFallbackPortPool(event.currentTarget.value)}
+                                placeholder="2053,2083,2087,2096,2443,9443"
+                                value={fallbackPortPool}
+                            />
                             <ProtocolToggle
                                 checked={protocols.VLESS_REALITY}
                                 label="VLESS + Reality + Vision"
@@ -828,6 +854,36 @@ export function MachinesPage() {
                                     title={`Resource plan: ${provisioningPlan.status}`}
                                 >
                                     <Stack gap="xs">
+                                        {provisioningPlan.result?.machineChecks.map((check) => (
+                                            <Group
+                                                align="flex-start"
+                                                justify="space-between"
+                                                key={check.code}
+                                                wrap="nowrap"
+                                            >
+                                                <div>
+                                                    <Text size="sm">{check.code}</Text>
+                                                    <Text c="dimmed" size="xs">
+                                                        {check.message}
+                                                    </Text>
+                                                </div>
+                                                <Badge
+                                                    color={
+                                                        check.ok
+                                                            ? 'teal'
+                                                            : check.advisory
+                                                              ? 'yellow'
+                                                              : 'red'
+                                                    }
+                                                >
+                                                    {check.ok
+                                                        ? 'PASS'
+                                                        : check.advisory
+                                                          ? 'REVIEW'
+                                                          : 'BLOCKED'}
+                                                </Badge>
+                                            </Group>
+                                        ))}
                                         {provisioningPlan.result?.dependencies
                                             .filter((dependency) => dependency.required)
                                             .map((dependency) => (
@@ -856,18 +912,38 @@ export function MachinesPage() {
                                                 </Group>
                                             ))}
                                         {provisioningPlan.result?.protocols.map((protocol) => (
-                                            <Group justify="space-between" key={protocol.protocol}>
-                                                <Text size="sm">{protocol.protocol}</Text>
-                                                <Badge
-                                                    color={
-                                                        protocol.status === 'READY' ? 'teal' : 'red'
-                                                    }
-                                                >
-                                                    {protocol.status === 'READY'
-                                                        ? `${protocol.network.toUpperCase()} ${protocol.selectedPort}`
-                                                        : protocol.errorCode}
-                                                </Badge>
-                                            </Group>
+                                            <Stack gap={2} key={protocol.protocol}>
+                                                <Group justify="space-between">
+                                                    <Text size="sm">{protocol.protocol}</Text>
+                                                    <Badge
+                                                        color={
+                                                            protocol.status === 'READY'
+                                                                ? 'teal'
+                                                                : 'red'
+                                                        }
+                                                    >
+                                                        {protocol.status === 'READY'
+                                                            ? `${protocol.network.toUpperCase()} ${protocol.selectedPort}`
+                                                            : protocol.errorCode}
+                                                    </Badge>
+                                                </Group>
+                                                <Text c="dimmed" size="xs">
+                                                    Candidates:{' '}
+                                                    {protocol.portAttempts.length > 0
+                                                        ? protocol.portAttempts
+                                                              .map(
+                                                                  (attempt) =>
+                                                                      `${attempt.port} ${attempt.available ? 'free' : 'unavailable'}`
+                                                              )
+                                                              .join(', ')
+                                                        : 'not evaluated'}
+                                                </Text>
+                                                {protocol.message && (
+                                                    <Text c="red" size="xs">
+                                                        {protocol.message}
+                                                    </Text>
+                                                )}
+                                            </Stack>
                                         ))}
                                         {(provisioningPlan.errorMessage ||
                                             provisioningPlan.errorCode) && (
@@ -967,7 +1043,9 @@ export function MachinesPage() {
                                     </Group>
                                     <Text c="dimmed" size="xs">
                                         Config {node.appliedRevision}/{node.desiredRevision} ·
-                                        Certificate {node.certificateStatus}
+                                        Certificate {node.certificateStatus} ·{' '}
+                                        {node.externalNetwork?.toUpperCase() ?? 'PORT'}{' '}
+                                        {node.externalPort ?? 'pending'}
                                     </Text>
                                     {node.lastStatusMessage && (
                                         <Text c="red" size="xs">
@@ -975,29 +1053,35 @@ export function MachinesPage() {
                                             {node.lastStatusMessage}
                                         </Text>
                                     )}
-                                    {node.lifecycleState === 'FAILED' && wizardMachine && (
-                                        <Button
-                                            loading={isRetrying}
-                                            mt="xs"
-                                            onClick={() =>
-                                                retryMachine({
-                                                    route: {
-                                                        uuid: wizardMachine.machine.uuid
-                                                    },
-                                                    variables: {
-                                                        nodeUuids: [node.uuid]
-                                                    }
-                                                })
-                                            }
-                                            size="xs"
-                                            variant="light"
-                                        >
-                                            Retry failed step
-                                        </Button>
-                                    )}
+                                    {['FAILED', 'DEGRADED'].includes(node.lifecycleState) &&
+                                        wizardMachine && (
+                                            <Button
+                                                loading={isRetrying}
+                                                mt="xs"
+                                                onClick={() =>
+                                                    retryMachine({
+                                                        route: {
+                                                            uuid: wizardMachine.machine.uuid
+                                                        },
+                                                        variables: {
+                                                            nodeUuids: [node.uuid]
+                                                        }
+                                                    })
+                                                }
+                                                size="xs"
+                                                variant="light"
+                                            >
+                                                Retry failed step
+                                            </Button>
+                                        )}
                                 </Card>
                             ))}
-                            <Group justify="flex-end">
+                            <Group justify="space-between">
+                                {wizardMachine && machineNodes.length < 3 && (
+                                    <Button onClick={configureMissingProtocols} variant="subtle">
+                                        Add missing protocol
+                                    </Button>
+                                )}
                                 <Button
                                     disabled={
                                         readyNodes.length === 0 || selectedSquads.length === 0
@@ -1058,6 +1142,25 @@ function formatRemaining(milliseconds: number): string {
     const minutes = Math.floor(totalSeconds / 60)
     const seconds = totalSeconds % 60
     return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+function parseFallbackPorts(value: string): number[] | undefined | null {
+    if (value.trim() === '') return undefined
+    const ports = value.split(',').map((port) => Number(port.trim()))
+    if (
+        ports.length > 15 ||
+        ports.some(
+            (port) =>
+                !Number.isInteger(port) ||
+                port < 1 ||
+                port > 65_535 ||
+                [2222, 2223, 2224].includes(port)
+        ) ||
+        new Set(ports).size !== ports.length
+    ) {
+        return null
+    }
+    return ports
 }
 
 function statusColor(status: Machine['status']): string {

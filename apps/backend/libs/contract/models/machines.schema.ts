@@ -23,6 +23,15 @@ export const WARP_STATUS = [
     'FAILED',
 ] as const;
 
+export const WARP_OWNERSHIP = [
+    'UNASSESSED',
+    'ABSENT',
+    'EXTERNAL',
+    'MANAGED',
+    'ADOPTED',
+    'CONFLICT',
+] as const;
+
 const DateSchema = z.iso.datetime().transform((value) => new Date(value));
 
 export const MachineSchema = z.object({
@@ -40,6 +49,7 @@ export const MachineSchema = z.object({
     systemInfo: z.unknown().nullable(),
     clientCertExpiresAt: DateSchema.nullable(),
     warpStatus: z.enum(WARP_STATUS),
+    warpOwnership: z.enum(WARP_OWNERSHIP),
     warpProxyPort: z.int().nullable(),
     warpLastChecked: DateSchema.nullable(),
     lastErrorCode: z.string().nullable(),
@@ -58,6 +68,7 @@ export const MachineEnrollmentTokenSchema = z.object({
 export const MachinePlanCheckSchema = z.object({
     code: z.string().min(1).max(64),
     ok: z.boolean(),
+    advisory: z.boolean().optional().default(false),
     message: z.string().max(1024),
 });
 

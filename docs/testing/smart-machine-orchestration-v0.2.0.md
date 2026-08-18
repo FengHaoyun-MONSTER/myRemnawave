@@ -1,6 +1,6 @@
 # Smart Machine Orchestration v0.2.0: Test Plan
 
-Status: **Planned before implementation**
+Status: **Local implementation verified; PostgreSQL, Linux coexistence, and browser acceptance pending**
 
 ## 1. Test environments
 
@@ -120,3 +120,82 @@ duration, environment, Red-to-Green evidence, migration result, coverage when
 available, real-server fingerprints, browser screenshots, failures, unrun
 items, and residual risk. “All tests passed” without this evidence is not an
 acceptable report.
+
+## 7. Local verification evidence (2026-08-18)
+
+Environment: Windows workspace, Node/npm dependencies already installed, Go
+toolchain available, Docker Desktop client present but daemon stopped, and no
+local PostgreSQL listener.
+
+| Area | Command | Result | Evidence |
+|---|---|---|---|
+| Backend schema | `npx prisma validate` with local placeholder URLs | PASS | schema valid |
+| Backend static | `npm run check` | PASS | formatter and linter completed |
+| Backend tests | `npm test` | PASS | 13 files, 49 tests, 0 failed/skipped, 9.39 s |
+| Backend build | `npx rspack build` with `NODE_ENV=production` | PASS | compiled in 21.72 s |
+| Frontend static | `npm run check` | PASS | no error; existing unrelated React warnings remain |
+| Frontend types | `npm run typecheck` | PASS | zero type errors |
+| Frontend build | `npm run typecheck`; `npx vite build` with `NODE_ENV=production` | PASS | 11,727 modules, built in 10.96 s |
+| Agent tests | `go test ./...` | PASS | 14 tested packages plus command package, 0 failures |
+| Agent static/build | `go vet ./...`; `go build ./cmd/...`; `sh -n install.sh` | PASS | zero errors |
+| Agent coverage | `go test -coverprofile agent_coverage ./...` | PASS | 47.6% statement coverage overall |
+| Production dependencies | `npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org` in backend and frontend | PASS | 0 vulnerabilities in each package |
+| Deployment safety helpers | `bash deploy/panel/test-machine-control-public-port.sh`; `bash deploy/panel/test-deploy-rollback.sh` | PASS | public-port validation and rollback configuration tests passed |
+| Diff hygiene | `git diff --check` and redacted added-line secret scan | PASS | no whitespace errors or credential patterns |
+
+Red-to-Green evidence for Batch D:
+
+- repository tests first demonstrated that a healthy published node could be
+  retried and that retry planning offered fallback ports for a published node;
+  after the guard and immutable-port fix, the repository suite passes 8/8;
+- frontend static checking rejected an impure `Date.now()` render-time call;
+  after reusing the page clock state, the full frontend check/type/build gate
+  passes;
+- WARP takeover now has a regression test proving an incomplete `INSTALLING`
+  ownership record cannot be reported as an idempotent success.
+- the Machine-specific pool contract first rejected a pool containing its own
+  preferred port; the contract now accepts a reusable Machine pool while the
+  service removes the current preferred port per protocol;
+- Docker bind-race tests first failed at `CONTAINER_RUN_FAILED`; the Agent now
+  removes only the positively owned failed container, selects one remaining
+  candidate, retries exactly once, and ends with `PORT_BIND_RACE_EXHAUSTED` if
+  the second bind races too;
+- discovery tests initially failed to compile because clock, DNS, host-firewall,
+  and cloud-security-group facts were absent. The implemented checks now block
+  only unsafe clock/DNS cases while infrastructure reachability uncertainty is
+  reported as a non-mutating advisory;
+- command-boundary tests prove nested successful discovery diagnostics are
+  bounded and redacted before persistence, and a failed retry beside a healthy
+  terminal sibling settles at `DEGRADED` instead of remaining indefinitely in
+  `PROVISIONING`;
+- imported-certificate tests prove DNS is revalidated before any managed file
+  is created or copied, including `IMPORT_EXISTING`, and mismatches leave the
+  managed certificate directory untouched;
+- provisioning-order tests prove the global read-only resource preflight is
+  queued before Docker installation and every protocol mutation; protocol
+  preflight still requires a usable Docker runtime after the approved
+  dependency step.
+
+NOT RUN or environment-blocked:
+
+- Prisma migration deployment/rollback against real PostgreSQL: no local
+  PostgreSQL and Docker daemon is stopped. The additive SQL and Prisma schema
+  validate statically, but database execution remains a release blocker;
+- `go test -race ./...`: Windows Go race support requires a working CGO toolchain
+  not present in this workspace;
+- backend line/branch coverage: the lock file advertises Vitest coverage as an
+  optional peer, but `@vitest/coverage-v8` is not installed;
+- ShellCheck and actionlint: executables are not installed;
+- the package build scripts use Unix-style inline environment variables, and
+  the frontend has no `build` alias. Direct `npm run build` therefore exits 1
+  on this Windows workspace; the equivalent typecheck and production
+  Rspack/Vite commands above pass. No package-script portability change was
+  made because it is outside this orchestration scope;
+- installer mock/container, Linux systemd/Docker/WARP coexistence, 3X-UI
+  before/after fingerprints, real protocol data plane, ACME/imported
+  certificate, restart/reconnect, and desktop/mobile browser acceptance: these
+  require the separately authorized test-server deployment gate.
+
+The default npm mirror returned HTTP 404 for the audit endpoint; repeating the
+same read-only audit against the official npm registry succeeded. No dependency
+changes were made.

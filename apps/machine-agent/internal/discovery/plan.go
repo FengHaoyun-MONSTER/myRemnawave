@@ -18,11 +18,13 @@ const (
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 type ProtocolRequest struct {
-	Protocol       string   `json:"protocol"`
-	Network        string   `json:"network"`
-	ControlPort    uint16   `json:"controlPort"`
-	Candidates     []uint16 `json:"candidates"`
-	RequiresHTTP01 bool     `json:"requiresHttp01"`
+	Protocol        string   `json:"protocol"`
+	Network         string   `json:"network"`
+	ControlPort     uint16   `json:"controlPort"`
+	Candidates      []uint16 `json:"candidates"`
+	RequiresHTTP01  bool     `json:"requiresHttp01"`
+	Domain          string   `json:"domain,omitempty"`
+	ExpectedAddress string   `json:"expectedAddress,omitempty"`
 }
 
 type Request struct {
@@ -33,9 +35,10 @@ type Request struct {
 }
 
 type Check struct {
-	Code    string `json:"code"`
-	OK      bool   `json:"ok"`
-	Message string `json:"message"`
+	Code     string `json:"code"`
+	OK       bool   `json:"ok"`
+	Advisory bool   `json:"advisory,omitempty"`
+	Message  string `json:"message"`
 }
 
 type PortAttempt struct {
@@ -178,10 +181,19 @@ func validateRequest(request Request) error {
 		if len(protocol.Candidates) == 0 || len(protocol.Candidates) > 16 {
 			return fmt.Errorf("protocol %s requires one to sixteen candidates", protocol.Protocol)
 		}
+		if (protocol.Domain == "") != (protocol.ExpectedAddress == "") {
+			return fmt.Errorf("protocol %s requires both domain and expectedAddress", protocol.Protocol)
+		}
+		if len(protocol.Domain) > 253 || len(protocol.ExpectedAddress) > 253 {
+			return fmt.Errorf("protocol %s contains an oversized DNS name", protocol.Protocol)
+		}
 		seenCandidates := map[uint16]struct{}{}
 		for _, candidate := range protocol.Candidates {
 			if candidate == 0 {
 				return errors.New("candidate ports must be between 1 and 65535")
+			}
+			if candidate >= 2222 && candidate <= 2224 {
+				return errors.New("candidate ports 2222-2224 are reserved for local control")
 			}
 			if _, duplicate := seenCandidates[candidate]; duplicate {
 				return fmt.Errorf("protocol %s contains a duplicate candidate", protocol.Protocol)

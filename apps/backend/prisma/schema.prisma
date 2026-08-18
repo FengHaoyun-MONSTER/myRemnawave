@@ -169,18 +169,18 @@ model Nodes {
   port     Int?    @map("port")
   proxyUrl String? @map("proxy_url")
 
-  machineUuid     String? @map("machine_uuid") @db.Uuid
-  endpointUuid    String  @unique @default(dbgenerated("gen_random_uuid()")) @map("endpoint_uuid") @db.Uuid
-  protocolKey     String? @map("protocol_key") @db.VarChar(32)
-  lifecycleState  String  @default("DRAFT") @map("lifecycle_state") @db.VarChar(32)
-  isPublished     Boolean @default(false) @map("is_published")
-  externalPort    Int?    @map("external_port")
-  externalNetwork String? @map("external_network") @db.VarChar(3)
-  protocolSettings Json   @default("{}") @map("protocol_settings")
-  desiredRevision Int     @default(0) @map("desired_revision")
-  appliedRevision Int     @default(0) @map("applied_revision")
-  certificateMode String? @map("certificate_mode") @db.VarChar(32)
-  certificateStatus String @default("NOT_REQUIRED") @map("certificate_status") @db.VarChar(32)
+  machineUuid          String?   @map("machine_uuid") @db.Uuid
+  endpointUuid         String    @unique @default(dbgenerated("gen_random_uuid()")) @map("endpoint_uuid") @db.Uuid
+  protocolKey          String?   @map("protocol_key") @db.VarChar(32)
+  lifecycleState       String    @default("DRAFT") @map("lifecycle_state") @db.VarChar(32)
+  isPublished          Boolean   @default(false) @map("is_published")
+  externalPort         Int?      @map("external_port")
+  externalNetwork      String?   @map("external_network") @db.VarChar(3)
+  protocolSettings     Json      @default("{}") @map("protocol_settings")
+  desiredRevision      Int       @default(0) @map("desired_revision")
+  appliedRevision      Int       @default(0) @map("applied_revision")
+  certificateMode      String?   @map("certificate_mode") @db.VarChar(32)
+  certificateStatus    String    @default("NOT_REQUIRED") @map("certificate_status") @db.VarChar(32)
   certificateExpiresAt DateTime? @map("certificate_expires_at")
   certificateBlockedAt DateTime? @map("certificate_blocked_at")
 
@@ -252,9 +252,9 @@ model Machines {
   agentLastSeenAt   DateTime? @map("agent_last_seen_at")
   systemInfo        Json?     @map("system_info")
 
-  enrollmentTokenHash String?   @unique @map("enrollment_token_hash") @db.VarChar(128)
-  enrollmentExpiresAt DateTime? @map("enrollment_expires_at")
-  enrollmentUsedAt    DateTime? @map("enrollment_used_at")
+  enrollmentTokenHash       String?   @unique @map("enrollment_token_hash") @db.VarChar(128)
+  enrollmentExpiresAt       DateTime? @map("enrollment_expires_at")
+  enrollmentUsedAt          DateTime? @map("enrollment_used_at")
   enrollmentReplayTokenHash String?   @unique @map("enrollment_replay_token_hash") @db.VarChar(128)
   enrollmentAttemptId       String?   @map("enrollment_attempt_id") @db.Uuid
   enrollmentCsrFingerprint  String?   @map("enrollment_csr_fingerprint") @db.VarChar(64)
@@ -266,6 +266,7 @@ model Machines {
   clientCertExpiresAt   DateTime? @map("client_cert_expires_at")
 
   warpStatus      String    @default("DISABLED") @map("warp_status") @db.VarChar(32)
+  warpOwnership   String    @default("UNASSESSED") @map("warp_ownership") @db.VarChar(32)
   warpProxyPort   Int?      @map("warp_proxy_port")
   warpLastChecked DateTime? @map("warp_last_checked")
 
@@ -276,8 +277,8 @@ model Machines {
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  nodes    Nodes[]
-  commands MachineCommands[]
+  nodes             Nodes[]
+  commands          MachineCommands[]
   provisioningPlans MachineProvisioningPlans[]
 
   @@index([status])
@@ -286,19 +287,19 @@ model Machines {
 }
 
 model MachineProvisioningPlans {
-  uuid          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  machineUuid   String   @map("machine_uuid") @db.Uuid
-  status        String   @default("PENDING") @db.VarChar(32)
-  request       Json
-  requestHash   String   @map("request_hash") @db.VarChar(64)
-  result        Json?
-  commandUuid   String?  @unique @map("command_uuid") @db.Uuid
-  errorCode     String?  @map("error_code") @db.VarChar(64)
-  errorMessage  String?  @map("error_message") @db.VarChar(1024)
-  expiresAt     DateTime @map("expires_at")
-  appliedAt     DateTime? @map("applied_at")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+  uuid         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  machineUuid  String    @map("machine_uuid") @db.Uuid
+  status       String    @default("PENDING") @db.VarChar(32)
+  request      Json
+  requestHash  String    @map("request_hash") @db.VarChar(64)
+  result       Json?
+  commandUuid  String?   @unique @map("command_uuid") @db.Uuid
+  errorCode    String?   @map("error_code") @db.VarChar(64)
+  errorMessage String?   @map("error_message") @db.VarChar(1024)
+  expiresAt    DateTime  @map("expires_at")
+  appliedAt    DateTime? @map("applied_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
 
   machine Machines @relation(fields: [machineUuid], references: [uuid], onDelete: Cascade)
 
@@ -531,10 +532,10 @@ model InternalSquadInbounds {
 }
 
 model ConfigProfiles {
-  uuid         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  viewPosition Int    @default(autoincrement()) @map("view_position")
-  name         String @unique @map("name")
-  config       Json   @map("config")
+  uuid            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  viewPosition    Int     @default(autoincrement()) @map("view_position")
+  name            String  @unique @map("name")
+  config          Json    @map("config")
   templateKey     String? @map("template_key") @db.VarChar(32)
   templateVersion Int?    @map("template_version")
   isSystem        Boolean @default(false) @map("is_system")

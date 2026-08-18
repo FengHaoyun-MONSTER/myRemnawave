@@ -211,9 +211,19 @@ export class MachinesService {
 
     async provision(uuid: string, dto: ProvisionMachineBodyDto) {
         try {
+            const globalCandidates = this.config.get('MACHINE_PORT_CANDIDATES') ?? [];
+            const request = {
+                ...dto,
+                protocols: dto.protocols.map((protocol) => ({
+                    ...protocol,
+                    fallbackPorts: (protocol.fallbackPorts ?? globalCandidates).filter(
+                        (port) => port !== protocol.externalPort,
+                    ),
+                })),
+            };
             const result = await this.machinesRepository.createProvisioningPlan({
                 machineUuid: uuid,
-                request: dto,
+                request,
                 now: new Date(),
             });
             await this.machineControlGateway.dispatchReady(uuid);
@@ -534,6 +544,8 @@ export class MachinesService {
                         );
                     case 'RETRY_NODE_INVALID':
                         throw new ConflictException('Managed node metadata is incomplete');
+                    case 'RETRY_NODE_NOT_RETRYABLE':
+                        throw new ConflictException('Only failed or degraded nodes may be retried');
                     case 'RETRY_ALREADY_RUNNING':
                         throw new ConflictException('A retry is already running for this node');
                     case 'NODE_CREDENTIALS_MISSING':

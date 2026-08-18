@@ -128,6 +128,7 @@ func TestMissingWarpDoesNotOverwriteForeignOwnership(t *testing.T) {
 		ManagedRoot: root,
 		MachineID:   testMachineID,
 		LookupPath:  func(string) (string, error) { return "", errors.New("not found") },
+		Detect3XUI:  func(context.Context) (bool, string, error) { return false, "not detected", nil },
 	}
 	payload := json.RawMessage(`{"enabled":true,"proxyPort":40000,"mode":"INSTALL_OR_REPAIR_MANAGED"}`)
 	_, err := handler.Execute(context.Background(), payload)
@@ -147,11 +148,33 @@ func TestManagedRepairRefusesExistingUnownedWarp(t *testing.T) {
 		MachineID:   testMachineID,
 		Runner:      runner,
 		LookupPath:  func(string) (string, error) { return "/usr/bin/warp-cli", nil },
+		Detect3XUI:  func(context.Context) (bool, string, error) { return false, "not detected", nil },
 	}
 	payload := json.RawMessage(`{"enabled":true,"proxyPort":40000,"mode":"INSTALL_OR_REPAIR_MANAGED"}`)
 	_, err := handler.Execute(context.Background(), payload)
 	if err == nil || !strings.Contains(err.Error(), "WARP_TAKEOVER_REQUIRED") {
 		t.Fatalf("expected ownership blocker, got %v", err)
+	}
+}
+
+func TestManagedWarpMutationRefusesDetected3XUIBeforeAnyCommand(t *testing.T) {
+	runner := &compatibleExternalRunner{}
+	handler := &Handler{
+		ManagedRoot: t.TempDir(),
+		MachineID:   testMachineID,
+		Runner:      runner,
+		Detect3XUI: func(context.Context) (bool, string, error) {
+			return true, "x-ui.service is installed", nil
+		},
+	}
+	payload := json.RawMessage(`{"enabled":true,"proxyPort":40000,"mode":"INSTALL_OR_REPAIR_MANAGED"}`)
+
+	_, err := handler.Execute(context.Background(), payload)
+	if err == nil || !strings.Contains(err.Error(), "WARP_MUTATION_FORBIDDEN_3XUI") {
+		t.Fatalf("expected 3X-UI mutation refusal, got %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("WARP commands ran before refusal: %#v", runner.calls)
 	}
 }
 

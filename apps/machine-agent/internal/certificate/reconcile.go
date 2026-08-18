@@ -74,14 +74,12 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 	if err := validate(request); err != nil {
 		return nil, err
 	}
-	if request.Mode == "HTTP_01" {
-		resolver := h.Resolver
-		if resolver == nil {
-			resolver = net.DefaultResolver
-		}
-		if err := validateDNS(ctx, resolver, request.Domain, request.ExpectedAddress); err != nil {
-			return nil, err
-		}
+	resolver := h.Resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	if err := validateDNS(ctx, resolver, request.Domain, request.ExpectedAddress); err != nil {
+		return nil, err
 	}
 	instanceDir := filepath.Join(filepath.Clean(h.ManagedRoot), "instances", request.InstanceID)
 	if !filepath.IsAbs(instanceDir) {
@@ -171,8 +169,8 @@ func validate(request Request) error {
 			return errors.New("HTTP_01 requires an email and expected machine address and does not accept source paths")
 		}
 	case "IMPORT_EXISTING":
-		if request.Email != "" || request.ExpectedAddress != "" || !filepath.IsAbs(request.CertificatePath) || !filepath.IsAbs(request.PrivateKeyPath) {
-			return errors.New("IMPORT_EXISTING requires absolute certificate and private key paths")
+		if request.Email != "" || strings.TrimSpace(request.ExpectedAddress) == "" || !filepath.IsAbs(request.CertificatePath) || !filepath.IsAbs(request.PrivateKeyPath) {
+			return errors.New("IMPORT_EXISTING requires an expected machine address and absolute certificate and private key paths")
 		}
 	default:
 		return errors.New("unsupported certificate mode")

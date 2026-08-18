@@ -41,3 +41,14 @@ func TestSupportedOSVersionsIncludeDebian13(t *testing.T) {
 		}
 	}
 }
+
+func TestDependencyPreflightCanDelayDockerRequirement(t *testing.T) {
+	falseValue := false
+	trueValue := true
+	if preflightRequiresDocker(PreflightRequest{RequireDocker: &falseValue}) {
+		t.Fatal("machine-level dependency preflight must not require Docker before its approved install action")
+	}
+	if !preflightRequiresDocker(PreflightRequest{}) || !preflightRequiresDocker(PreflightRequest{RequireDocker: &trueValue}) {
+		t.Fatal("protocol preflight must require a usable Docker runtime by default")
+	}
+}

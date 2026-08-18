@@ -40,8 +40,9 @@ type PortRequirement struct {
 }
 
 type PreflightRequest struct {
-	InstanceID string            `json:"instanceId,omitempty"`
-	Ports      []PortRequirement `json:"ports"`
+	InstanceID    string            `json:"instanceId,omitempty"`
+	Ports         []PortRequirement `json:"ports"`
+	RequireDocker *bool             `json:"requireDocker,omitempty"`
 }
 
 type Check struct {
@@ -81,8 +82,12 @@ func (h PreflightHandler) Execute(ctx context.Context, payload json.RawMessage) 
 		return nil, &Error{Code: "INVENTORY_FAILED", Message: err.Error()}
 	}
 	checks := []Check{supportedOSCheck(system), memoryCheck(system), diskCheck(system)}
-	checks = append(checks, commandCheck(ctx, "docker", "docker", "version", "--format", "{{.Server.Version}}"))
+	if preflightRequiresDocker(request) {
+		checks = append(checks, commandCheck(ctx, "docker", "docker", "version", "--format", "{{.Server.Version}}"))
+	}
 	checks = append(checks, commandCheck(ctx, "systemd", "systemctl", "--version"))
+	clock := discovery.ClockSynchronizationCheck(ctx)
+	checks = append(checks, Check{Name: "clock_synchronized", OK: clock.OK, Message: clock.Message})
 	for _, requirement := range request.Ports {
 		checks = append(checks, portCheck(requirement))
 	}
@@ -93,6 +98,10 @@ func (h PreflightHandler) Execute(ctx context.Context, payload json.RawMessage) 
 		}
 	}
 	return PreflightResult{System: system, Checks: checks, OK: ok}, nil
+}
+
+func preflightRequiresDocker(request PreflightRequest) bool {
+	return request.RequireDocker == nil || *request.RequireDocker
 }
 
 func memoryCheck(system inventory.System) Check {

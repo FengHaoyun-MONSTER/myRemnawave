@@ -195,6 +195,17 @@ describe('MachinesService resource planning', () => {
         });
 
         expect(result.plan.status).toBe('PENDING');
+        expect(repository.createProvisioningPlan).toHaveBeenCalledWith(
+            expect.objectContaining({
+                request: expect.objectContaining({
+                    protocols: [
+                        expect.objectContaining({
+                            fallbackPorts: [8443, 2053, 2083],
+                        }),
+                    ],
+                }),
+            }),
+        );
         expect(keygen.generateKey).not.toHaveBeenCalled();
         expect(repository.provision).not.toHaveBeenCalled();
         expect(gateway.dispatchReady).toHaveBeenCalled();
@@ -307,6 +318,24 @@ describe('MachinesService resource planning', () => {
         );
     });
 
+    it('does not generate credentials or apply an expired resource plan', async () => {
+        const { service, repository, keygen } = createService(true);
+        const planUuid = '123e4567-e89b-42d3-a456-426614174005';
+        repository.getProvisioningPlan.mockResolvedValue(
+            provisioningPlan({
+                uuid: planUuid,
+                status: 'READY',
+                expiresAt: new Date('2026-08-17T23:59:59.000Z'),
+            }),
+        );
+
+        await expect(
+            service.applyProvisioningPlan('10e2c8e1-515c-4a9c-99eb-dbb8cc2aabdc', planUuid),
+        ).rejects.toThrow('Machine provisioning plan is not ready');
+        expect(keygen.generateKey).not.toHaveBeenCalled();
+        expect(repository.provision).not.toHaveBeenCalled();
+    });
+
     it('records an explicit admin WARP takeover decision against the blocked plan', async () => {
         const { service, repository, gateway } = createService(true);
         repository.authorizeWarpTakeover.mockResolvedValue({
@@ -347,11 +376,13 @@ function createService(controlReady: boolean) {
         consumeEnrollmentToken: vi.fn(),
     };
     const config = {
-        get: vi.fn((name: string) =>
-            name === 'MACHINE_CONTROL_PUBLIC_URL'
-                ? 'wss://panel.example.test:3010/api/machine-control'
-                : undefined,
-        ),
+        get: vi.fn((name: string) => {
+            if (name === 'MACHINE_CONTROL_PUBLIC_URL') {
+                return 'wss://panel.example.test:3010/api/machine-control';
+            }
+            if (name === 'MACHINE_PORT_CANDIDATES') return [443, 8443, 2053, 2083];
+            return undefined;
+        }),
     };
     const gateway = {
         isReady: vi.fn(() => controlReady),

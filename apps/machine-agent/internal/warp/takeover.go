@@ -58,15 +58,6 @@ func (h TakeoverHandler) Execute(ctx context.Context, payload json.RawMessage) (
 	if _, err := lookup("warp-cli"); err != nil {
 		return nil, errors.New("WARP_TAKEOVER_NOT_APPLICABLE: external WARP is absent")
 	}
-	if ownership, ownershipErr := ReadOwnership(h.ManagedRoot); ownershipErr == nil {
-		if ownership.MachineID != h.MachineID {
-			return nil, errors.New("WARP_TAKEOVER_OWNED_BY_ANOTHER_MACHINE: ownership cannot be replaced")
-		}
-		return TakeoverResult{PlanID: request.PlanID, Ownership: ownership.State, Message: "WARP is already owned by this Machine"}, nil
-	} else if !errors.Is(ownershipErr, os.ErrNotExist) {
-		return nil, fmt.Errorf("WARP_TAKEOVER_OWNERSHIP_UNSAFE: %w", ownershipErr)
-	}
-
 	detector := h.Detect3XUI
 	if detector == nil {
 		detector = h.detect3XUI
@@ -78,6 +69,17 @@ func (h TakeoverHandler) Execute(ctx context.Context, payload json.RawMessage) (
 	if detected {
 		return nil, fmt.Errorf("WARP_TAKEOVER_FORBIDDEN_3XUI: %s", boundedTakeoverMessage(evidence))
 	}
+	if ownership, ownershipErr := ReadOwnership(h.ManagedRoot); ownershipErr == nil {
+		if ownership.MachineID != h.MachineID {
+			return nil, errors.New("WARP_TAKEOVER_OWNED_BY_ANOTHER_MACHINE: ownership cannot be replaced")
+		}
+		if ownership.State != "ADOPTED" && ownership.State != "MANAGED" {
+			return nil, errors.New("WARP_TAKEOVER_NOT_APPLICABLE: owned WARP installation is incomplete")
+		}
+		return TakeoverResult{PlanID: request.PlanID, Ownership: ownership.State, Message: "WARP is already owned by this Machine"}, nil
+	} else if !errors.Is(ownershipErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("WARP_TAKEOVER_OWNERSHIP_UNSAFE: %w", ownershipErr)
+	}
 
 	now := time.Now().UTC()
 	if err := createOwnership(h.ManagedRoot, Ownership{
@@ -87,7 +89,7 @@ func (h TakeoverHandler) Execute(ctx context.Context, payload json.RawMessage) (
 		AdoptedFromPlanID: request.PlanID,
 		AdoptedAt:         now,
 	}); err != nil {
-		if existing, readErr := ReadOwnership(h.ManagedRoot); readErr == nil && existing.MachineID == h.MachineID {
+		if existing, readErr := ReadOwnership(h.ManagedRoot); readErr == nil && existing.MachineID == h.MachineID && (existing.State == "ADOPTED" || existing.State == "MANAGED") {
 			return TakeoverResult{PlanID: request.PlanID, Ownership: existing.State, Message: "WARP is already owned by this Machine"}, nil
 		}
 		return nil, err

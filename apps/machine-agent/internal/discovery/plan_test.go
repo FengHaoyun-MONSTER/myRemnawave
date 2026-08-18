@@ -84,6 +84,42 @@ func TestPlanRejectsDuplicateProtocol(t *testing.T) {
 	}
 }
 
+func TestPlanRejectsReservedControlPortCandidate(t *testing.T) {
+	request := Request{
+		PlanID: "123e4567-e89b-42d3-a456-426614174000",
+		Mode:   "PLAN",
+		Protocols: []ProtocolRequest{
+			{Protocol: "VLESS_REALITY", Network: "tcp", ControlPort: 2222, Candidates: []uint16{2223}},
+		},
+	}
+	if _, err := Plan(context.Background(), request, fakeProbe{}); err == nil {
+		t.Fatal("expected reserved control candidate validation failure")
+	}
+}
+
+func TestPlanBlocksOnlyHTTP01ProtocolWhenTCP80IsOccupied(t *testing.T) {
+	request := Request{
+		PlanID: "123e4567-e89b-42d3-a456-426614174000",
+		Mode:   "PLAN",
+		Protocols: []ProtocolRequest{
+			{Protocol: "VLESS_TLS_VISION", Network: "tcp", ControlPort: 2223, Candidates: []uint16{8443}, RequiresHTTP01: true},
+			{Protocol: "HYSTERIA2", Network: "udp", ControlPort: 2224, Candidates: []uint16{443}},
+		},
+	}
+	probe := fakeProbe{occupied: map[string]bool{"tcp:80": true}}
+
+	result, err := Plan(context.Background(), request, probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Protocols[0].Status != ProtocolBlocked || result.Protocols[0].ErrorCode != "HTTP01_PORT_UNAVAILABLE" {
+		t.Fatalf("TLS Vision should be blocked by HTTP-01: %#v", result.Protocols[0])
+	}
+	if result.Protocols[1].Status != ProtocolReady {
+		t.Fatalf("Hysteria2 with an imported certificate should remain ready: %#v", result.Protocols[1])
+	}
+}
+
 func itoa(value uint16) string {
 	if value == 0 {
 		return "0"

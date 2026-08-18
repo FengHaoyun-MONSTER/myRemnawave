@@ -57,6 +57,7 @@ type Handler struct {
 	Runner      Runner
 	LookupPath  func(string) (string, error)
 	Relay       func(context.Context, uint16) error
+	Detect3XUI  func(context.Context) (bool, string, error)
 	mu          sync.Mutex
 	listener    net.Listener
 }
@@ -88,6 +89,17 @@ func (h *Handler) Execute(ctx context.Context, payload json.RawMessage) (any, er
 			return nil, err
 		}
 		return Result{Enabled: true, ProxyPort: request.ProxyPort, Version: strings.TrimSpace(string(version)), Status: "CONNECTED", Ownership: "EXTERNAL"}, nil
+	}
+	detector := h.Detect3XUI
+	if detector == nil {
+		detector = (TakeoverHandler{Runner: h.Runner, LookupPath: h.LookupPath}).detect3XUI
+	}
+	detected, evidence, err := detector(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("WARP_3XUI_INSPECTION_FAILED: %w", err)
+	}
+	if detected {
+		return nil, fmt.Errorf("WARP_MUTATION_FORBIDDEN_3XUI: %s", boundedTakeoverMessage(evidence))
 	}
 	lookup := h.LookupPath
 	if lookup == nil {
