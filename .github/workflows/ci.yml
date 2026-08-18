@@ -146,6 +146,7 @@ jobs:
           set -euo pipefail
           sh -n .githooks/pre-commit
           sh -n .githooks/pre-push
+          bash -n scripts/check-release-readiness.sh
           bash -n scripts/test-git-guards.sh
           sh -n deploy/panel/install-panel.sh
           bash -n deploy/panel/test-install-panel.sh
@@ -155,6 +156,7 @@ jobs:
           sh deploy/panel/install-panel.sh --help 2>&1 | grep -F 'panel-vX.Y.Z'
 
           bash scripts/test-git-guards.sh
+          bash scripts/check-release-readiness.sh
 
           invalid_output="$(mktemp)"
           trap 'rm -f "${invalid_output}"' EXIT
@@ -213,6 +215,7 @@ jobs:
           deploy/panel/test-deploy-rollback.sh
           .githooks/pre-commit
           .githooks/pre-push
+          scripts/check-release-readiness.sh
           scripts/test-git-guards.sh
       - name: Run actionlint
         run: >-

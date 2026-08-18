@@ -55,3 +55,22 @@ reviewed revert through a pull request.
 - A feature branch can be tested by CI but cannot be deployed to the shared test
   server. Merge it first, fetch the resulting full `main` SHA, then dispatch the
   deployment for that exact commit.
+
+## Versioned release sequence
+
+1. Update `release-versions.env`, its referenced release-note files, and every
+   version consumer enforced by `scripts/check-release-readiness.sh` on an
+   `agent/*` branch.
+2. Merge the release-readiness PR only after all required CI checks pass, then
+   fetch and fast-forward local `main` to the exact `origin/main` commit.
+3. Create and push only the Agent tag declared by `AGENT_VERSION`. Wait for the
+   Agent release workflow and verify both binaries, the service unit, and
+   `SHA256SUMS` before continuing.
+4. Create and push only the panel tag declared by `PANEL_VERSION`. Its workflow
+   refuses to run unless the required non-draft Agent release already contains
+   all expected assets.
+5. Verify the panel installer, image, source, metadata, and checksum manifest,
+   then exercise the documented installer download URLs.
+
+Do not push both tags together. Published tags and release assets are immutable;
+fixes require a new patch version, not deletion or retargeting.

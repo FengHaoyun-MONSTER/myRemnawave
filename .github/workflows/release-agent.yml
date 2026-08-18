@@ -15,6 +15,18 @@ jobs:
         working-directory: apps/machine-agent
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Validate release tag and source
+        run: |
+          set -euo pipefail
+          ../../scripts/check-release-readiness.sh
+          source ../../release-versions.env
+          [ "${GITHUB_REF_NAME}" = "${AGENT_VERSION}" ]
+          [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main
+          test "$(git tag --points-at "${GITHUB_SHA}" | grep -Fxc "${GITHUB_REF_NAME}")" -eq 1
       - uses: actions/setup-go@v7
         with:
           go-version-file: apps/machine-agent/go.mod
@@ -44,12 +56,15 @@ jobs:
       - name: Publish immutable release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${GITHUB_REF_NAME}"
-          myremnawave-agent-linux-amd64
-          myremnawave-agent-linux-arm64
-          myremnawave-agent.service
-          SHA256SUMS
-          --repo "${GITHUB_REPOSITORY}"
-          --verify-tag
-          --generate-notes
+        run: |
+          set -euo pipefail
+          source ../../release-versions.env
+          gh release create "${GITHUB_REF_NAME}" \
+            myremnawave-agent-linux-amd64 \
+            myremnawave-agent-linux-arm64 \
+            myremnawave-agent.service \
+            SHA256SUMS \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file "../../${AGENT_RELEASE_NOTES}"
