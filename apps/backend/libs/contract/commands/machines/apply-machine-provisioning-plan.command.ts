@@ -11,7 +11,7 @@ export namespace ApplyMachineProvisioningPlanCommand {
         MACHINES_ROUTES.ACTIONS.APPLY_PROVISIONING_PLAN(':uuid', ':planUuid'),
         'post',
         'Apply a ready Machine provisioning plan',
-        { scope: 'provision', kind: 'write' },
+        { scope: 'apply-provisioning-plan', kind: 'write' },
     );
     export const RequestParamsSchema = z.object({ uuid: z.uuid(), planUuid: z.uuid() });
     export const RequestBodySchema = z.object({}).strict();

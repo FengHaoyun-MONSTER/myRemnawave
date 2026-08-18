@@ -10,7 +10,7 @@ export namespace AuthorizeMachineWarpTakeoverCommand {
         MACHINES_ROUTES.ACTIONS.AUTHORIZE_WARP_TAKEOVER(':uuid', ':planUuid'),
         'post',
         'Explicitly authorize takeover of an incompatible external WARP runtime',
-        { scope: 'provision', kind: 'write' },
+        { scope: 'authorize-warp-takeover', kind: 'write' },
     );
     export const RequestParamsSchema = z.object({ uuid: z.uuid(), planUuid: z.uuid() });
     export const RequestBodySchema = z
