@@ -45,7 +45,7 @@ func main() {
 	commandExecutor, err := executor.New(
 		commandStore,
 		configuration.CommandTimeout,
-		executor.DefaultHandlers(configuration.ManagedRoot),
+		executor.DefaultHandlers(configuration.ManagedRoot, configuration.MachineID),
 	)
 	if err != nil {
 		logger.Error("prepare command executor", "error", err.Error())

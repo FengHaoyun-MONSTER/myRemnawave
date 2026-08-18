@@ -103,6 +103,61 @@ describe('MachinesRepository command completion', () => {
             }),
         );
     });
+
+    it('persists safe command diagnostics and propagates them to the failed node', async () => {
+        const commandUpdate = vi.fn().mockResolvedValue({ count: 1 });
+        const nodeUpdate = vi.fn().mockResolvedValue({ count: 1 });
+        const machineUpdate = vi.fn().mockResolvedValue({});
+        const transaction = {
+            machineCommands: {
+                findFirst: vi.fn().mockResolvedValue({
+                    kind: 'reconcile_instance',
+                    payload: { instanceId: NODE_UUID },
+                }),
+                updateMany: commandUpdate,
+            },
+            nodes: {
+                updateMany: nodeUpdate,
+                count: vi.fn().mockResolvedValue(0),
+            },
+            machines: { update: machineUpdate },
+        };
+        const repository = repositoryWithTransaction(transaction);
+
+        await repository.completeCommand({
+            machineUuid: MACHINE_UUID,
+            commandUuid: COMMAND_UUID,
+            idempotencyKey: `reconcile_instance:${COMMAND_UUID}`,
+            status: 'failed',
+            errorCode: 'CONTAINER_RUN_FAILED',
+            errorMessage: 'selected TCP port is already owned by another process',
+            completedAt: new Date('2026-08-18T00:00:00.000Z'),
+        });
+
+        expect(commandUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    errorMessage: 'selected TCP port is already owned by another process',
+                }),
+            }),
+        );
+        expect(nodeUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    lastErrorCode: 'CONTAINER_RUN_FAILED',
+                    lastStatusMessage: 'selected TCP port is already owned by another process',
+                }),
+            }),
+        );
+        expect(machineUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    lastErrorCode: 'CONTAINER_RUN_FAILED',
+                    lastStatusMessage: 'selected TCP port is already owned by another process',
+                }),
+            }),
+        );
+    });
 });
 
 function repositoryWithTransaction(transaction: object): MachinesRepository {

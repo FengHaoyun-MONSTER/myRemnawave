@@ -27,6 +27,8 @@ export class MachineEntity implements Machines {
     warpStatus: string;
     warpProxyPort: number | null;
     warpLastChecked: Date | null;
+    lastErrorCode: string | null;
+    lastStatusMessage: string | null;
     archivedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;

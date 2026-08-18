@@ -59,8 +59,15 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install --assume-yes --no-install-recommends ca-certificates curl gnupg
 if ! command -v docker >/dev/null 2>&1; then
-    apt-get install --assume-yes --no-install-recommends docker.io
+    case "${ID}:${VERSION_ID}" in
+        debian:13) apt-get install --assume-yes --no-install-recommends docker.io docker-cli ;;
+        *) apt-get install --assume-yes --no-install-recommends docker.io ;;
+    esac
 fi
+command -v docker >/dev/null 2>&1 || {
+    echo "Docker CLI installation did not provide the docker command" >&2
+    exit 1
+}
 systemctl enable --now docker
 
 case "$(uname -m)" in

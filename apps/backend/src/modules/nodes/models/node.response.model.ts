@@ -38,6 +38,7 @@ export class NodeResponseModel {
     public isDisabled: boolean;
     public lastStatusChange: Date | null;
     public lastStatusMessage: null | string;
+    public lastErrorCode: null | string;
     public trafficResetDay: null | number;
     public consumptionMultiplier: number;
     public nodeConsumptionMultiplier: number;
@@ -91,6 +92,7 @@ export class NodeResponseModel {
         this.isDisabled = data.isDisabled;
         this.lastStatusChange = data.lastStatusChange;
         this.lastStatusMessage = data.lastStatusMessage;
+        this.lastErrorCode = data.lastErrorCode;
         this.isTrafficTrackingActive = data.isTrafficTrackingActive;
         this.trafficResetDay = data.trafficResetDay;
         this.trafficLimitBytes = Number(data.trafficLimitBytes);

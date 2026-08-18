@@ -57,6 +57,7 @@ func (DockerRunner) Run(ctx context.Context, arguments ...string) ([]byte, error
 
 type Handler struct {
 	ManagedRoot string
+	MachineID   string
 	Runner      Runner
 }
 
@@ -67,6 +68,9 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 	}
 	if err := validate(request); err != nil {
 		return nil, err
+	}
+	if !uuidPattern.MatchString(h.MachineID) {
+		return nil, errors.New("Machine ownership identity is invalid")
 	}
 	root, err := secureRoot(h.ManagedRoot)
 	if err != nil {
@@ -94,23 +98,24 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 	if runner == nil {
 		runner = DockerRunner{}
 	}
-	if _, err := runner.Run(ctx, "network", "inspect", managedNetwork); err != nil {
-		if output, createErr := runner.Run(ctx, "network", "create", managedNetwork); createErr != nil {
-			return nil, commandError("DOCKER_NETWORK_FAILED", output, createErr)
-		}
+	containerExists, currentHash, err := inspectContainer(ctx, runner, containerName, h.MachineID, request.InstanceID)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureManagedNetwork(ctx, runner, h.MachineID); err != nil {
+		return nil, err
 	}
 	if output, err := runner.Run(ctx, "pull", request.Image); err != nil {
 		return nil, commandError("IMAGE_PULL_FAILED", output, err)
 	}
 
-	currentHash, inspectErr := runner.Run(ctx, "inspect", "--format", `{{ index .Config.Labels "io.myremnawave.config-sha256" }}`, containerName)
-	if inspectErr == nil && strings.TrimSpace(string(currentHash)) == hash {
+	if containerExists && currentHash == hash {
 		if output, err := runner.Run(ctx, "start", containerName); err != nil && !strings.Contains(string(output), "already running") {
 			return nil, commandError("CONTAINER_START_FAILED", output, err)
 		}
 		return Result{InstanceID: request.InstanceID, ContainerName: containerName, ConfigHash: hash, RealityPublicKey: publicKey, RealityShortID: shortID}, nil
 	}
-	if inspectErr == nil {
+	if containerExists {
 		_, _ = runner.Run(ctx, "stop", "--time", "30", containerName)
 		if output, err := runner.Run(ctx, "rm", containerName); err != nil {
 			return nil, commandError("CONTAINER_REMOVE_FAILED", output, err)
@@ -122,9 +127,10 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 		"--restart", "unless-stopped",
 		"--network", managedNetwork,
 		"--add-host", "host.docker.internal:host-gateway",
-		"--label", "io.myremnawave.managed=true",
-		"--label", "io.myremnawave.instance=" + request.InstanceID,
-		"--label", "io.myremnawave.config-sha256=" + hash,
+		"--label", managedLabel + "=true",
+		"--label", machineLabel + "=" + h.MachineID,
+		"--label", instanceLabel + "=" + request.InstanceID,
+		"--label", configHashLabel + "=" + hash,
 		"--env-file", filepath.Join(instanceDir, "node.env"),
 		"--mount", "type=bind,src=" + certDir + ",dst=/etc/myremnawave/certs,readonly",
 		"--publish", fmt.Sprintf("127.0.0.1:%d:2222/tcp", request.ControlPort),

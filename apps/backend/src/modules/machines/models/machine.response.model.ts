@@ -17,6 +17,8 @@ export class MachineResponseModel {
     warpStatus: string;
     warpProxyPort: number | null;
     warpLastChecked: Date | null;
+    lastErrorCode: string | null;
+    lastStatusMessage: string | null;
     archivedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
@@ -38,6 +40,8 @@ export class MachineResponseModel {
         this.warpStatus = machine.warpStatus;
         this.warpProxyPort = machine.warpProxyPort;
         this.warpLastChecked = machine.warpLastChecked;
+        this.lastErrorCode = machine.lastErrorCode;
+        this.lastStatusMessage = machine.lastStatusMessage;
         this.archivedAt = machine.archivedAt;
         this.createdAt = machine.createdAt;
         this.updatedAt = machine.updatedAt;

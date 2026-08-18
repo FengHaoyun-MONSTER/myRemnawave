@@ -5,7 +5,7 @@ These instructions supplement the user's global engineering protocol.
 ## Scope and safety
 
 - The approved product contract is
-  `docs/requirements/requirements-baseline-v1.0.md`.
+  `docs/requirements/requirements-baseline-v1.1.md`.
 - This repository targets fresh development/test installations. Do not add
   production deployment or existing-data migration behavior without updating
   the baseline and obtaining approval.

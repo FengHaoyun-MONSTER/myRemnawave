@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { get } from 'node:https';
 import { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { WebSocket } from 'ws';
 
 import { TypedConfigService } from '@common/config/app-config';
 import { generateMasterCerts } from '@common/utils/certs/generate-certs.util';
@@ -62,5 +63,60 @@ describe('MachineControlGateway TLS boundary', () => {
                 request.on('error', reject);
             }),
         ).rejects.toThrow();
+    });
+});
+
+describe('MachineControlGateway command diagnostics', () => {
+    it('passes a redacted, bounded Agent error message to command completion', async () => {
+        const completeCommand = vi.fn().mockResolvedValue(true);
+        const repository = {
+            getActiveCommandKind: vi.fn().mockResolvedValue('reconcile_instance'),
+            completeCommand,
+            getReadyCommands: vi.fn().mockResolvedValue([]),
+        };
+        const gateway = new MachineControlGateway(
+            {} as TypedConfigService,
+            repository as unknown as MachinesRepository,
+        );
+        const message = JSON.stringify({
+            version: 1,
+            id: 'result-1',
+            type: 'command_result',
+            sentAt: '2026-08-18T00:00:00.000Z',
+            payload: {
+                commandId: '123e4567-e89b-42d3-a456-426614174002',
+                idempotencyKey: 'reconcile_instance:test',
+                status: 'failed',
+                errorCode: 'CONTAINER_RUN_FAILED',
+                message: 'docker failed with token=mrw_enroll_sensitive-value',
+                completedAt: '2026-08-18T00:00:00.000Z',
+            },
+        });
+        const webSocket = { readyState: WebSocket.OPEN, send: vi.fn() };
+
+        await (
+            gateway as unknown as {
+                handleMessage(
+                    socket: typeof webSocket,
+                    state: { machineUuid: string; helloReceived: boolean },
+                    data: Buffer,
+                    isBinary: boolean,
+                ): Promise<void>;
+            }
+        ).handleMessage(
+            webSocket,
+            {
+                machineUuid: '123e4567-e89b-42d3-a456-426614174000',
+                helloReceived: true,
+            },
+            Buffer.from(message),
+            false,
+        );
+
+        expect(completeCommand).toHaveBeenCalledWith(
+            expect.objectContaining({
+                errorMessage: 'docker failed with token=[REDACTED]',
+            }),
+        );
     });
 });

@@ -141,7 +141,9 @@ export class NodeHealthCheckQueueProcessor extends WorkerHost {
                 return;
             }
 
-            await this.nodesQueuesService.startNode({ nodeUuid });
+            if (nodeUpdatedResponse.response.machineUuid === null) {
+                await this.nodesQueuesService.startNode({ nodeUuid });
+            }
 
             this.eventEmitter.emit(
                 EVENTS.NODE.CONNECTION_RESTORED,
@@ -176,7 +178,9 @@ export class NodeHealthCheckQueueProcessor extends WorkerHost {
             return;
         }
 
-        await this.nodesQueuesService.startNode({ nodeUuid });
+        if (newNodeEntity.response.machineUuid === null) {
+            await this.nodesQueuesService.startNode({ nodeUuid });
+        }
 
         if (isConnected) {
             this.eventEmitter.emit(

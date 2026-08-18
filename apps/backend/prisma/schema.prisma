@@ -193,6 +193,7 @@ model Nodes {
 
   lastStatusChange  DateTime? @map("last_status_change")
   lastStatusMessage String?   @map("last_status_message")
+  lastErrorCode     String?   @map("last_error_code") @db.VarChar(64)
   note              String?   @map("note") @db.VarChar(255)
 
   consumptionMultiplier     BigInt @default(1000000000) @map("consumption_multiplier")
@@ -268,6 +269,9 @@ model Machines {
   warpProxyPort   Int?      @map("warp_proxy_port")
   warpLastChecked DateTime? @map("warp_last_checked")
 
+  lastErrorCode     String? @map("last_error_code") @db.VarChar(64)
+  lastStatusMessage String? @map("last_status_message") @db.VarChar(1024)
+
   archivedAt DateTime? @map("archived_at")
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at")
@@ -290,6 +294,7 @@ model MachineCommands {
   payload        Json      @map("payload")
   result         Json?     @map("result")
   errorCode      String?   @map("error_code") @db.VarChar(64)
+  errorMessage   String?   @map("error_message") @db.VarChar(1024)
   deadlineAt     DateTime  @map("deadline_at")
   startedAt      DateTime? @map("started_at")
   completedAt    DateTime? @map("completed_at")

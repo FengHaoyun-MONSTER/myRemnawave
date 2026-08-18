@@ -42,6 +42,8 @@ export const MachineSchema = z.object({
     warpStatus: z.enum(WARP_STATUS),
     warpProxyPort: z.int().nullable(),
     warpLastChecked: DateSchema.nullable(),
+    lastErrorCode: z.string().nullable(),
+    lastStatusMessage: z.string().nullable(),
     archivedAt: DateSchema.nullable(),
     createdAt: DateSchema,
     updatedAt: DateSchema,

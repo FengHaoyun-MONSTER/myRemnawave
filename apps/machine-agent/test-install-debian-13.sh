@@ -3,6 +3,10 @@
 set -eu
 
 installer="${1:-./install.sh}"
+grep -F -- '--no-install-recommends docker.io docker-cli' "$installer" >/dev/null || {
+    echo "Debian 13 installer must explicitly install docker-cli with docker.io" >&2
+    exit 1
+}
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT HUP INT TERM
 

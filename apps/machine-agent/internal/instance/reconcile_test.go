@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,6 +16,22 @@ import (
 
 type fakeRunner struct {
 	calls [][]string
+}
+
+type ownershipRunner struct {
+	calls  [][]string
+	labels string
+}
+
+func (f *ownershipRunner) Run(_ context.Context, arguments ...string) ([]byte, error) {
+	f.calls = append(f.calls, append([]string(nil), arguments...))
+	if len(arguments) >= 2 && arguments[0] == "network" && arguments[1] == "inspect" {
+		return nil, errors.New("not found")
+	}
+	if len(arguments) > 0 && arguments[0] == "inspect" {
+		return []byte(f.labels), nil
+	}
+	return []byte("ok"), nil
 }
 
 func (f *fakeRunner) Run(_ context.Context, arguments ...string) ([]byte, error) {
@@ -41,7 +58,7 @@ func TestReconcileRealityInstance(t *testing.T) {
 		SecretKey:    strings.Repeat("A", 120),
 	}
 	payload, _ := json.Marshal(request)
-	resultRaw, err := (Handler{ManagedRoot: root, Runner: runner}).Execute(context.Background(), payload)
+	resultRaw, err := (Handler{ManagedRoot: root, MachineID: "123e4567-e89b-42d3-a456-426614174999", Runner: runner}).Execute(context.Background(), payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,5 +94,68 @@ func TestRejectsUnpinnedImage(t *testing.T) {
 	}
 	if err := validate(request); err == nil {
 		t.Fatal("expected unpinned image to be rejected")
+	}
+}
+
+func TestReconcileRefusesSameNameForeignContainer(t *testing.T) {
+	runner := &ownershipRunner{labels: `{"io.myremnawave.managed":"true","io.myremnawave.instance":"123e4567-e89b-42d3-a456-426614174000","io.myremnawave.machine":"foreign-machine"}`}
+	request := Request{
+		InstanceID:   "123e4567-e89b-42d3-a456-426614174000",
+		Protocol:     "VLESS_REALITY",
+		Image:        "remnawave/node@sha256:" + strings.Repeat("a", 64),
+		ControlPort:  2222,
+		ExternalPort: 443,
+		Network:      "tcp",
+		SecretKey:    strings.Repeat("A", 120),
+	}
+	payload, _ := json.Marshal(request)
+	_, err := (Handler{
+		ManagedRoot: t.TempDir(),
+		MachineID:   "123e4567-e89b-42d3-a456-426614174999",
+		Runner:      runner,
+	}).Execute(context.Background(), payload)
+	if err == nil || !strings.Contains(err.Error(), "OWNERSHIP_CONFLICT") {
+		t.Fatalf("expected ownership conflict, got %v", err)
+	}
+	for _, call := range runner.calls {
+		if len(call) > 0 && (call[0] == "stop" || call[0] == "rm") {
+			t.Fatalf("foreign container was mutated: %v", call)
+		}
+	}
+}
+
+func TestReconcileStartsMatchingManagedContainerWithoutReplacingIt(t *testing.T) {
+	request := Request{
+		InstanceID:   "123e4567-e89b-42d3-a456-426614174000",
+		Protocol:     "VLESS_REALITY",
+		Image:        "remnawave/node@sha256:" + strings.Repeat("a", 64),
+		ControlPort:  2222,
+		ExternalPort: 443,
+		Network:      "tcp",
+		SecretKey:    strings.Repeat("A", 120),
+	}
+	machineID := "123e4567-e89b-42d3-a456-426614174999"
+	runner := &ownershipRunner{labels: fmt.Sprintf(
+		`{"io.myremnawave.managed":"true","io.myremnawave.instance":%q,"io.myremnawave.machine":%q,"io.myremnawave.config-sha256":%q}`,
+		request.InstanceID,
+		machineID,
+		desiredHash(request),
+	)}
+	payload, _ := json.Marshal(request)
+	_, err := (Handler{ManagedRoot: t.TempDir(), MachineID: machineID, Runner: runner}).Execute(context.Background(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started bool
+	for _, call := range runner.calls {
+		if len(call) > 0 && call[0] == "start" {
+			started = true
+		}
+		if len(call) > 0 && (call[0] == "stop" || call[0] == "rm" || call[0] == "run") {
+			t.Fatalf("matching container was replaced: %v", call)
+		}
+	}
+	if !started {
+		t.Fatal("matching managed container was not started")
 	}
 }

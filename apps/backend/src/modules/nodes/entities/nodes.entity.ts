@@ -39,6 +39,7 @@ export class NodesEntity implements Nodes {
     public isDisabled: boolean;
     public lastStatusChange: Date | null;
     public lastStatusMessage: null | string;
+    public lastErrorCode: null | string;
 
     public isTrafficTrackingActive: boolean;
     public trafficResetDay: null | number;

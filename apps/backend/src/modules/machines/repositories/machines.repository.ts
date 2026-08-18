@@ -430,6 +430,7 @@ export class MachinesRepository {
                     data: {
                         lifecycleState: 'PROVISIONING',
                         isConnecting: false,
+                        lastErrorCode: null,
                         lastStatusMessage: null,
                         ...(certificateRequired ? { certificateStatus: 'PENDING' } : {}),
                     },
@@ -812,6 +813,7 @@ export class MachinesRepository {
         idempotencyKey: string;
         status: 'succeeded' | 'failed' | 'unsupported';
         errorCode?: string;
+        errorMessage?: string;
         result?: unknown;
         completedAt: Date;
     }): Promise<boolean> {
@@ -856,6 +858,7 @@ export class MachinesRepository {
                         input.status === 'unsupported'
                             ? (input.errorCode ?? 'CAPABILITY_NOT_AVAILABLE')
                             : (input.errorCode ?? null),
+                    errorMessage: input.errorMessage ?? null,
                     result:
                         input.result === undefined || input.result === null
                             ? Prisma.JsonNull
@@ -867,6 +870,18 @@ export class MachinesRepository {
                 },
             });
             if (result.count !== 1) return false;
+
+            const failureCode = input.errorCode ?? 'MACHINE_COMMAND_FAILED';
+            const failureMessage = input.errorMessage ?? failureCode;
+            if (input.status !== 'succeeded') {
+                await transaction.machines.update({
+                    where: { uuid: input.machineUuid },
+                    data: {
+                        lastErrorCode: failureCode,
+                        lastStatusMessage: failureMessage,
+                    },
+                });
+            }
 
             if (input.status === 'succeeded' && input.result !== undefined) {
                 if (command.kind === 'inventory') {
@@ -881,7 +896,11 @@ export class MachinesRepository {
                     };
                     await transaction.nodes.updateMany({
                         where: { uuid: instanceId, machineUuid: input.machineUuid },
-                        data: { lastStatusMessage: null, lastStatusChange: input.completedAt },
+                        data: {
+                            lastErrorCode: null,
+                            lastStatusMessage: null,
+                            lastStatusChange: input.completedAt,
+                        },
                     });
                     if (reconcileResult.realityPublicKey && reconcileResult.realityShortId) {
                         await transaction.hosts.updateMany({
@@ -904,6 +923,7 @@ export class MachinesRepository {
                             certificateStatus: 'VALID',
                             certificateExpiresAt: new Date(certificateResult.expiresAt),
                             certificateBlockedAt: null,
+                            lastErrorCode: null,
                             lastStatusMessage: null,
                             lastStatusChange: input.completedAt,
                         },
@@ -924,6 +944,7 @@ export class MachinesRepository {
                         },
                         data: {
                             lifecycleState: 'PUBLISHED',
+                            lastErrorCode: null,
                             lastStatusMessage: null,
                             lastStatusChange: input.completedAt,
                         },
@@ -988,6 +1009,7 @@ export class MachinesRepository {
                                     : 'PROVISIONING',
                                 isConnected: true,
                                 isConnecting: !caughtUp,
+                                lastErrorCode: null,
                                 lastStatusMessage: null,
                                 lastStatusChange: input.completedAt,
                             },
@@ -1051,7 +1073,8 @@ export class MachinesRepository {
                         lifecycleState: 'FAILED',
                         isConnected: false,
                         isConnecting: false,
-                        lastStatusMessage: input.errorCode ?? 'AUTHORIZATION_CONFIG_FAILED',
+                        lastErrorCode: failureCode,
+                        lastStatusMessage: failureMessage,
                         lastStatusChange: input.completedAt,
                     },
                 });
@@ -1089,7 +1112,8 @@ export class MachinesRepository {
                         certificateBlockedAt: existingCertificateIsValid ? null : input.completedAt,
                         isConnecting: false,
                         isConnected: existingCertificateIsValid,
-                        lastStatusMessage: input.errorCode ?? 'CERTIFICATE_RECONCILE_FAILED',
+                        lastErrorCode: failureCode,
+                        lastStatusMessage: failureMessage,
                         lastStatusChange: input.completedAt,
                     },
                 });
@@ -1130,7 +1154,8 @@ export class MachinesRepository {
                         lifecycleState: rolledBackNode?.isPublished ? 'PUBLISHED' : 'FAILED',
                         isConnected: Boolean(rolledBackNode?.isPublished),
                         isConnecting: false,
-                        lastStatusMessage: input.errorCode,
+                        lastErrorCode: failureCode,
+                        lastStatusMessage: failureMessage,
                         lastStatusChange: input.completedAt,
                     },
                 });
@@ -1151,7 +1176,8 @@ export class MachinesRepository {
                         ...(command.kind === 'reconcile_certificate'
                             ? { certificateStatus: 'FAILED' }
                             : {}),
-                        lastStatusMessage: input.errorCode ?? 'Machine command failed',
+                        lastErrorCode: failureCode,
+                        lastStatusMessage: failureMessage,
                         lastStatusChange: input.completedAt,
                     },
                 });
@@ -1197,7 +1223,8 @@ export class MachinesRepository {
                     },
                     data: {
                         lifecycleState: 'DEGRADED',
-                        lastStatusMessage: input.errorCode ?? 'WARP_HEALTH_CHECK_FAILED',
+                        lastErrorCode: failureCode,
+                        lastStatusMessage: failureMessage,
                         lastStatusChange: input.completedAt,
                     },
                 });
@@ -1217,7 +1244,8 @@ export class MachinesRepository {
                         lifecycleState: 'FAILED',
                         isConnected: false,
                         isConnecting: false,
-                        lastStatusMessage: 'Machine preflight failed',
+                        lastErrorCode: failureCode,
+                        lastStatusMessage: failureMessage,
                         lastStatusChange: input.completedAt,
                     },
                 });

@@ -106,22 +106,21 @@ func diskCheck(system inventory.System) Check {
 	}
 }
 
-func DefaultHandlers(managedRoot string) map[string]Handler {
+func DefaultHandlers(managedRoot, machineID string) map[string]Handler {
 	return map[string]Handler{
 		protocol.CommandInventory:            InventoryHandler{ManagedRoot: managedRoot},
 		protocol.CommandPreflight:            PreflightHandler{ManagedRoot: managedRoot},
-		protocol.CommandReconcileInstance:    instance.Handler{ManagedRoot: managedRoot},
+		protocol.CommandReconcileInstance:    instance.Handler{ManagedRoot: managedRoot, MachineID: machineID},
 		protocol.CommandReconcileCertificate: certificate.Handler{ManagedRoot: managedRoot},
 		protocol.CommandReconcileWARP:        warp.NewHandler(managedRoot),
 		protocol.CommandApplyConfig:          nodeconfig.Handler{ManagedRoot: managedRoot},
-		protocol.CommandStartInstance:        instance.LifecycleHandler{Start: true},
-		protocol.CommandStopInstance:         instance.LifecycleHandler{Start: false},
+		protocol.CommandStartInstance:        instance.LifecycleHandler{Start: true, MachineID: machineID},
+		protocol.CommandStopInstance:         instance.LifecycleHandler{Start: false, MachineID: machineID},
 	}
 }
 
 func supportedOSCheck(system inventory.System) Check {
-	ok := (system.OSID == "debian" && system.OSVersion == "12") ||
-		(system.OSID == "ubuntu" && (strings.HasPrefix(system.OSVersion, "22.04") || strings.HasPrefix(system.OSVersion, "24.04")))
+	ok := supportsOS(system.OSID, system.OSVersion)
 	message := system.OSPrettyName
 	if runtime.GOOS != "linux" {
 		ok = false
@@ -130,6 +129,11 @@ func supportedOSCheck(system inventory.System) Check {
 		message = fmt.Sprintf("unsupported operating system %s %s", system.OSID, system.OSVersion)
 	}
 	return Check{Name: "operating_system", OK: ok, Message: message}
+}
+
+func supportsOS(id, version string) bool {
+	return (id == "debian" && (version == "12" || version == "13")) ||
+		(id == "ubuntu" && (strings.HasPrefix(version, "22.04") || strings.HasPrefix(version, "24.04")))
 }
 
 func commandCheck(ctx context.Context, name, binary string, arguments ...string) Check {

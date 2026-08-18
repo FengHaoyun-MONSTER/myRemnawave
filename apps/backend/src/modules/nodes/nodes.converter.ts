@@ -37,6 +37,7 @@ const entityToModel = (entity: NodesEntity): Nodes => {
         isDisabled: entity.isDisabled,
         lastStatusChange: entity.lastStatusChange,
         lastStatusMessage: entity.lastStatusMessage,
+        lastErrorCode: entity.lastErrorCode,
         isTrafficTrackingActive: entity.isTrafficTrackingActive,
         trafficResetDay: entity.trafficResetDay,
         trafficLimitBytes: entity.trafficLimitBytes,

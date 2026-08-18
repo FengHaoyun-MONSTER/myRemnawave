@@ -371,12 +371,18 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
             commandKind === 'preflight' &&
             result.status === 'succeeded' &&
             preflightResultSchema.parse(validatedResult).ok === false;
+        const errorMessage = preflightFailed
+            ? summarizePreflightFailure(preflightResultSchema.parse(validatedResult))
+            : result.status === 'succeeded'
+              ? undefined
+              : sanitizeAgentMessage(result.message);
         const accepted = await this.machinesRepository.completeCommand({
             machineUuid: state.machineUuid,
             commandUuid: result.commandId,
             idempotencyKey: result.idempotencyKey,
             status: preflightFailed ? 'failed' : result.status,
             errorCode: preflightFailed ? 'PREFLIGHT_FAILED' : result.errorCode,
+            errorMessage,
             result: validatedResult,
             completedAt: new Date(),
         });
@@ -437,4 +443,31 @@ function toBuffers(data: Buffer | ArrayBuffer | Buffer[]): Buffer[] {
 function safeError(error: unknown): string {
     const message = error instanceof Error ? error.message : 'unknown error';
     return message.slice(0, 1024).replaceAll('\0', '');
+}
+
+function summarizePreflightFailure(result: z.infer<typeof preflightResultSchema>): string {
+    const message = result.checks
+        .filter((check) => !check.ok)
+        .map((check) => `${check.name}: ${check.message}`)
+        .join('; ');
+    return (
+        sanitizeAgentMessage(message || 'Machine preflight failed') ?? 'Machine preflight failed'
+    );
+}
+
+function sanitizeAgentMessage(message: string | undefined): string | undefined {
+    if (!message) return undefined;
+    const redacted = message
+        .replaceAll('\0', '')
+        .replace(
+            /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi,
+            '[REDACTED PRIVATE KEY]',
+        )
+        .replace(/mrw_enroll_[A-Za-z0-9_-]+/g, '[REDACTED]')
+        .replace(/(bearer\s+)[^\s,;]+/gi, '$1[REDACTED]')
+        .replace(
+            /((?:token|secret|password|private[_-]?key|client[_-]?key)\s*[:=]\s*)[^\s,;]+/gi,
+            '$1[REDACTED]',
+        );
+    return redacted.slice(0, 1024);
 }

@@ -343,6 +343,12 @@ export function MachinesPage() {
                                         Agent {machine.agentVersion ?? 'not enrolled'} · WARP{' '}
                                         {machine.warpStatus}
                                     </Text>
+                                    {machine.lastStatusMessage && (
+                                        <Text c="red" size="xs">
+                                            {machine.lastErrorCode ?? 'MACHINE_COMMAND_FAILED'}:{' '}
+                                            {machine.lastStatusMessage}
+                                        </Text>
+                                    )}
                                     <Button
                                         onClick={() => openExisting(machine)}
                                         size="xs"
@@ -750,6 +756,12 @@ export function MachinesPage() {
                                         Config {node.appliedRevision}/{node.desiredRevision} ·
                                         Certificate {node.certificateStatus}
                                     </Text>
+                                    {node.lastStatusMessage && (
+                                        <Text c="red" size="xs">
+                                            {node.lastErrorCode ?? 'NODE_COMMAND_FAILED'}:{' '}
+                                            {node.lastStatusMessage}
+                                        </Text>
+                                    )}
                                     {node.lifecycleState === 'FAILED' && wizardMachine && (
                                         <Button
                                             loading={isRetrying}
