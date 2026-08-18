@@ -13,6 +13,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  branch-policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate branch source
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+          FULL_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = 'pull_request' ]; then
+            [ "${BASE_REF}" = 'main' ]
+            [[ "${HEAD_REF}" == agent/* ]]
+          else
+            [ "${FULL_REF}" = 'refs/heads/main' ]
+          fi
+
   backend:
     runs-on: ubuntu-24.04
     services:
@@ -125,12 +144,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sh -n .githooks/pre-commit
+          sh -n .githooks/pre-push
+          bash -n scripts/test-git-guards.sh
           sh -n deploy/panel/install-panel.sh
           bash -n deploy/panel/test-install-panel.sh
           bash -n deploy/panel/test-machine-control-public-port.sh
           bash -n deploy/panel/deploy.sh
           bash -n deploy/panel/test-deploy-rollback.sh
           sh deploy/panel/install-panel.sh --help 2>&1 | grep -F 'panel-vX.Y.Z'
+
+          bash scripts/test-git-guards.sh
 
           invalid_output="$(mktemp)"
           trap 'rm -f "${invalid_output}"' EXIT
@@ -187,6 +211,9 @@ jobs:
           deploy/panel/test-machine-control-public-port.sh
           deploy/panel/deploy.sh
           deploy/panel/test-deploy-rollback.sh
+          .githooks/pre-commit
+          .githooks/pre-push
+          scripts/test-git-guards.sh
       - name: Run actionlint
         run: >-
           docker run --rm

@@ -72,6 +72,19 @@ tokens, server addresses intended to remain private, or test-environment secret
 values. Test deployment credentials must be supplied through protected GitHub
 Environments and GitHub Actions secrets.
 
+Development uses `agent/<short-description>` branches. Local `main` is a
+read-only mirror of `origin/main`; changes are merged only through a pull
+request after required CI checks. Enable the versioned local safety hooks once
+per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hooks prevent commits and direct pushes on `main`, reject unapproved branch
+names, and permit release tags only when their commit is already on
+`origin/main`. GitHub branch protection is the authoritative enforcement point.
+
 ## Upstream and licensing
 
 Remnawave components are licensed under GNU AGPLv3. Imported components retain
