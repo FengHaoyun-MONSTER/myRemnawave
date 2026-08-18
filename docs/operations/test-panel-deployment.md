@@ -32,7 +32,7 @@ then run the downloaded installer with the additional option:
 ```bash
 sudo sh install-panel.sh \
   --domain panel.example.com \
-  --version panel-v0.1.1 \
+  --version panel-v0.2.0 \
   --machine-control-public-port 3010 \
   --asset-dir /path/to/release-assets
 ```

@@ -21,8 +21,8 @@ Replace `panel.example.com` and run as a user with `sudo` access:
 
 ```bash
 bash -o pipefail -c "curl -fsSL --proto '=https' --tlsv1.2 \
-  https://github.com/FengHaoyun-MONSTER/myRemnawave/releases/download/panel-v0.1.1/install-panel.sh \
-  | sudo sh -s -- --domain panel.example.com --version panel-v0.1.1"
+  https://github.com/FengHaoyun-MONSTER/myRemnawave/releases/download/panel-v0.2.0/install-panel.sh \
+  | sudo sh -s -- --domain panel.example.com --version panel-v0.2.0"
 ```
 
 The installer accepts only an exact `panel-vX.Y.Z` release, verifies the source
@@ -37,8 +37,8 @@ example, UpCloud free-trial servers permit inbound TCP 3389:
 
 ```bash
 bash -o pipefail -c "curl -fsSL --proto '=https' --tlsv1.2 \
-  https://github.com/FengHaoyun-MONSTER/myRemnawave/releases/download/panel-v0.1.1/install-panel.sh \
-  | sudo sh -s -- --domain panel.example.com --version panel-v0.1.1 \
+  https://github.com/FengHaoyun-MONSTER/myRemnawave/releases/download/panel-v0.2.0/install-panel.sh \
+  | sudo sh -s -- --domain panel.example.com --version panel-v0.2.0 \
       --machine-control-public-port 3389"
 ```
 

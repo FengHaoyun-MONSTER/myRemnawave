@@ -1,6 +1,8 @@
 # Smart Machine Orchestration v0.2.0: Test Plan
 
-Status: **Local implementation verified; PostgreSQL, Linux coexistence, and browser acceptance pending**
+Status: **CI, PostgreSQL migration, rollback, and test-panel deployment verified;
+protocol data plane, 3X-UI coexistence, WARP routing, and browser acceptance
+pending**
 
 ## 1. Test environments
 
@@ -199,3 +201,41 @@ NOT RUN or environment-blocked:
 The default npm mirror returned HTTP 404 for the audit endpoint; repeating the
 same read-only audit against the official npm registry succeeded. No dependency
 changes were made.
+
+## 8. CI and authorized test-panel evidence (2026-08-19)
+
+| Area | Evidence | Result |
+|---|---|---|
+| Protected PR gates | CI run `32168684941` | PASS: backend, frontend, Agent race tests, branch policy, deployment assets, and secret scan |
+| Real PostgreSQL | `Deploy Test Panel` against PostgreSQL 18 | PASS: all four v0.2.0 additive migrations applied |
+| Failure rollback | deployment run `32167559424` | PASS: duplicate API scope made the new panel unhealthy; the previous release was restored and became healthy automatically |
+| Scope regression | Machine endpoint metadata test | Red: 11 endpoints/9 unique scopes; Green: all 11 unique after the focused fix |
+| Test deployment | deployment run `32168929698`, source `756157f8d2ef43850e16561cb16328f588427238` | PASS: exact image provenance, database migration, container health, HTTPS, security headers, private service ports, and control-plane mTLS rejection |
+| Runtime health | read-only SSH inspection | PASS: panel/database/Valkey healthy, panel restart count 0 |
+| API bootstrap | bounded panel log inspection | PASS: scope catalog built with 181 endpoints and 245 grantable scopes; no duplicate-scope or unhandled-rejection error |
+| Authorization smoke | unauthenticated `GET /api/machines/` | PASS: HTTP 401 |
+| Branch hygiene | GitHub protection and local/remote branch audit | PASS: protected `main`, required PR checks, no force push/deletion, no stale feature branches |
+
+The failed deployment was not ignored or retried in place. Its logs established
+the duplicate-scope root cause, the workflow restored the prior release, a
+focused Red-to-Green fix was merged through a second protected PR, and only then
+was the exact new `main` commit deployed.
+
+## 9. Remaining acceptance gates
+
+- create and apply a real three-protocol Machine plan using authenticated panel
+  access;
+- verify Reality, VLESS TLS Vision, and Hysteria2 data planes with dedicated
+  protocol domains and an ACME notification email;
+- capture and compare complete 3X-UI service, listener, container, and file
+  fingerprints before and after provisioning;
+- exercise compatible, unregistered, incompatible, and explicitly authorized
+  WARP states and verify route-level fail-closed behavior;
+- restart the real Agent and managed protocol containers, replay commands, and
+  verify identity and port stability;
+- perform desktop/mobile browser, keyboard/focus, console, and network
+  acceptance of the Machine wizard.
+
+These tests were not bypassed with direct database writes or forged panel
+credentials. They remain explicit test-server acceptance work and do not block
+publishing the test-only v0.2.0 artifacts.
