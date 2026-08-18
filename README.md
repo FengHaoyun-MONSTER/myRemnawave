@@ -63,7 +63,7 @@ requirements, pre-downloaded assets, layout, and recovery details.
 - Debian 12/13, Ubuntu 22.04 LTS, and Ubuntu 24.04 LTS test coverage.
 
 The approved product baseline is
-[docs/requirements/requirements-baseline-v1.0.md](docs/requirements/requirements-baseline-v1.0.md).
+[docs/requirements/requirements-baseline-v1.1.md](docs/requirements/requirements-baseline-v1.1.md).
 
 ## Repository status
 
@@ -71,6 +71,19 @@ This repository is public. Never commit credentials, private keys, enrollment
 tokens, server addresses intended to remain private, or test-environment secret
 values. Test deployment credentials must be supplied through protected GitHub
 Environments and GitHub Actions secrets.
+
+Development uses `agent/<short-description>` branches. Local `main` is a
+read-only mirror of `origin/main`; changes are merged only through a pull
+request after required CI checks. Enable the versioned local safety hooks once
+per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hooks prevent commits and direct pushes on `main`, reject unapproved branch
+names, and permit release tags only when their commit is already on
+`origin/main`. GitHub branch protection is the authoritative enforcement point.
 
 ## Upstream and licensing
 

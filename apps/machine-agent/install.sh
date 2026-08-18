@@ -3,7 +3,7 @@
 set -eu
 
 repository="FengHaoyun-MONSTER/myRemnawave"
-agent_version="${MYREMNAWAVE_AGENT_VERSION:-v0.1.2}"
+agent_version="${MYREMNAWAVE_AGENT_VERSION:-v0.2.0}"
 panel_url=""
 enrollment_token=""
 
@@ -58,10 +58,6 @@ esac
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install --assume-yes --no-install-recommends ca-certificates curl gnupg
-if ! command -v docker >/dev/null 2>&1; then
-    apt-get install --assume-yes --no-install-recommends docker.io
-fi
-systemctl enable --now docker
 
 case "$(uname -m)" in
     x86_64) asset_arch="amd64" ;;

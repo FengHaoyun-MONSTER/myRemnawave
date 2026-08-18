@@ -11,6 +11,8 @@ import {
 
 import { TypedConfigService } from '@common/config/app-config';
 import { generateMachineClientCertificate } from '@common/utils/certs/generate-machine-client-cert.util';
+import { ProvisionMachineCommand } from '@libs/contracts/commands';
+import { MachineProvisioningPlanResultSchema } from '@libs/contracts/models';
 
 import { KeygenService } from '@modules/keygen/keygen.service';
 
@@ -18,14 +20,16 @@ import { NodesQueuesService } from '@queue/_nodes';
 
 import {
     CreateMachineBodyDto,
+    AuthorizeMachineWarpTakeoverBodyDto,
     EnrollMachineBodyDto,
     ProvisionMachineBodyDto,
     PublishMachineBodyDto,
     RetryMachineBodyDto,
 } from './dtos/machines.dto';
 import { MachineControlGateway } from './machine-control.gateway';
+import { MachineProvisioningPlanResponseModel } from './models/machine-provisioning-plan.response.model';
 import { MachineResponseModel } from './models/machine.response.model';
-import { PROTOCOL_KEYS } from './protocol-templates';
+import { PROTOCOL_KEYS, PROTOCOL_TEMPLATES, ProtocolKey } from './protocol-templates';
 import { MachinesRepository, ProvisioningError } from './repositories/machines.repository';
 
 const ENROLLMENT_TTL_MS = 30 * 60 * 1_000;
@@ -207,42 +211,26 @@ export class MachinesService {
 
     async provision(uuid: string, dto: ProvisionMachineBodyDto) {
         try {
-            const generatedCredentials = await Promise.all(
-                dto.protocols.map(async (protocol) => ({
-                    protocol: protocol.protocol,
-                    credentials: await this.keygenService.generateKey(),
+            const globalCandidates = this.config.get('MACHINE_PORT_CANDIDATES') ?? [];
+            const request = {
+                ...dto,
+                protocols: dto.protocols.map((protocol) => ({
+                    ...protocol,
+                    fallbackPorts: (protocol.fallbackPorts ?? globalCandidates).filter(
+                        (port) => port !== protocol.externalPort,
+                    ),
                 })),
-            );
-            if (generatedCredentials.some((item) => !item.credentials.isOk)) {
-                throw new ServiceUnavailableException('Node credentials are unavailable');
-            }
-            const nodeSecrets = Object.fromEntries(
-                generatedCredentials.map((item) => [
-                    item.protocol,
-                    item.credentials.isOk ? item.credentials.response.payload : '',
-                ]),
-            );
-            const result = await this.machinesRepository.provision({
+            };
+            const result = await this.machinesRepository.createProvisioningPlan({
                 machineUuid: uuid,
-                protocols: dto.protocols,
-                enableWarp: dto.enableWarp,
-                nodeSecrets,
+                request,
                 now: new Date(),
             });
-            await Promise.all(
-                result.nodeUuids.map((nodeUuid) =>
-                    this.nodesQueuesService.startNode({
-                        nodeUuid,
-                        force: true,
-                        managedConfigUpdate: true,
-                    }),
-                ),
-            );
             await this.machineControlGateway.dispatchReady(uuid);
             return {
                 machine: new MachineResponseModel(result.machine),
-                nodeUuids: result.nodeUuids,
-                commandUuids: result.commandUuids,
+                plan: new MachineProvisioningPlanResponseModel(result.plan),
+                commandUuid: result.commandUuid,
             };
         } catch (error) {
             if (error instanceof ProvisioningError) {
@@ -271,10 +259,198 @@ export class MachinesService {
                         );
                     case 'NODE_CREDENTIALS_MISSING':
                         throw new ServiceUnavailableException('Node credentials are unavailable');
+                    case 'WARP_PLAN_INVALID':
+                        throw new ConflictException(
+                            'WARP ownership or compatibility blocks this plan',
+                        );
                 }
             }
             if (isUniqueConstraintViolation(error)) {
                 throw new ConflictException('Provisioning conflicts with an existing node or host');
+            }
+            throw error;
+        }
+    }
+
+    async getProvisioningPlan(uuid: string, planUuid: string) {
+        const plan = await this.machinesRepository.getProvisioningPlan(uuid, planUuid);
+        if (!plan) throw new NotFoundException('Machine provisioning plan not found');
+        return new MachineProvisioningPlanResponseModel(plan);
+    }
+
+    async applyProvisioningPlan(uuid: string, planUuid: string) {
+        try {
+            const plan = await this.machinesRepository.getProvisioningPlan(uuid, planUuid);
+            if (!plan) throw new NotFoundException('Machine provisioning plan not found');
+            if (plan.status !== 'READY' || plan.expiresAt <= new Date()) {
+                throw new ConflictException('Machine provisioning plan is not ready');
+            }
+            const request = ProvisionMachineCommand.RequestBodySchema.parse(plan.request);
+            const discovery = MachineProvisioningPlanResultSchema.parse(plan.result);
+            if (discovery.planId !== plan.uuid || !discovery.machineReady || !discovery.ready) {
+                throw new ConflictException('Machine provisioning plan is invalid');
+            }
+            const resultByProtocol = new Map(
+                discovery.protocols.map((protocol) => [protocol.protocol, protocol]),
+            );
+            const protocols = request.protocols.flatMap((protocol) => {
+                const selected = resultByProtocol.get(protocol.protocol);
+                const expectedNetwork = PROTOCOL_TEMPLATES[protocol.protocol].network;
+                if (
+                    !selected ||
+                    selected.status !== 'READY' ||
+                    selected.selectedPort === null ||
+                    selected.network !== expectedNetwork
+                ) {
+                    return [];
+                }
+                return [
+                    {
+                        ...protocol,
+                        externalPort: selected.selectedPort,
+                        fallbackPorts: selected.portAttempts
+                            .filter(
+                                (attempt) =>
+                                    attempt.available && attempt.port !== selected.selectedPort,
+                            )
+                            .map((attempt) => attempt.port),
+                    },
+                ];
+            });
+            if (protocols.length === 0) {
+                throw new ConflictException('Machine provisioning plan has no ready protocols');
+            }
+            const dockerDependency = discovery.dependencies.find(
+                (dependency) => dependency.name === 'docker',
+            );
+            const dependencyActions =
+                dockerDependency && ['INSTALL', 'REPAIR'].includes(dockerDependency.action)
+                    ? [{ name: 'docker' as const, action: 'INSTALL_IF_MISSING' as const }]
+                    : [];
+            const warpDependency = discovery.dependencies.find(
+                (dependency) => dependency.name === 'warp',
+            );
+            const warpMode = request.enableWarp
+                ? warpDependency?.action === 'REUSE_EXTERNAL'
+                    ? ('REUSE_EXTERNAL' as const)
+                    : ['INSTALL_MANAGED', 'REPAIR_MANAGED'].includes(warpDependency?.action ?? '')
+                      ? ('INSTALL_OR_REPAIR_MANAGED' as const)
+                      : null
+                : null;
+            if (request.enableWarp && !warpMode) {
+                throw new ConflictException('WARP ownership or compatibility blocks this plan');
+            }
+            const generatedCredentials = await Promise.all(
+                protocols.map(async (protocol) => ({
+                    protocol: protocol.protocol,
+                    credentials: await this.keygenService.generateKey(),
+                })),
+            );
+            if (generatedCredentials.some((item) => !item.credentials.isOk)) {
+                throw new ServiceUnavailableException('Node credentials are unavailable');
+            }
+            const nodeSecrets = Object.fromEntries(
+                generatedCredentials.map((item) => [
+                    item.protocol,
+                    item.credentials.isOk ? item.credentials.response.payload : '',
+                ]),
+            ) as Partial<Record<ProtocolKey, string>>;
+            const result = await this.machinesRepository.provision({
+                machineUuid: uuid,
+                planUuid,
+                protocols,
+                enableWarp: request.enableWarp,
+                warpMode,
+                dependencyActions,
+                nodeSecrets,
+                now: new Date(),
+            });
+            await this.machineControlGateway.dispatchReady(uuid);
+            return {
+                machine: new MachineResponseModel(result.machine),
+                nodeUuids: result.nodeUuids,
+                commandUuids: result.commandUuids,
+            };
+        } catch (error) {
+            if (error instanceof ProvisioningError) {
+                switch (error.reason) {
+                    case 'PLAN_NOT_READY':
+                        throw new ConflictException('Machine provisioning plan is not ready');
+                    case 'MACHINE_NOT_FOUND':
+                        throw new NotFoundException('Machine not found');
+                    case 'MACHINE_NOT_ENROLLED':
+                        throw new ConflictException('Machine Agent has not enrolled yet');
+                    case 'MACHINE_OFFLINE':
+                        throw new ConflictException('Machine Agent is offline');
+                    case 'MACHINE_AGENT_CAPABILITY_MISSING':
+                        throw new ConflictException(
+                            'Machine Agent must be upgraded before provisioning these features',
+                        );
+                    case 'PROTOCOL_ALREADY_EXISTS':
+                        throw new ConflictException(
+                            'One of the requested protocols already exists on this machine',
+                        );
+                    case 'PROTOCOL_PORT_CONFLICT':
+                        throw new ConflictException(
+                            'A planned protocol port conflicts with an existing managed node',
+                        );
+                    case 'SYSTEM_TEMPLATE_INVALID':
+                        throw new ServiceUnavailableException(
+                            'System protocol template is invalid',
+                        );
+                    case 'NODE_CREDENTIALS_MISSING':
+                        throw new ServiceUnavailableException('Node credentials are unavailable');
+                    case 'WARP_PLAN_INVALID':
+                        throw new ConflictException(
+                            'WARP ownership or compatibility blocks this plan',
+                        );
+                }
+            }
+            if (isUniqueConstraintViolation(error)) {
+                throw new ConflictException('Provisioning conflicts with an existing node or host');
+            }
+            throw error;
+        }
+    }
+
+    async authorizeWarpTakeover(
+        uuid: string,
+        planUuid: string,
+        dto: AuthorizeMachineWarpTakeoverBodyDto,
+        requestedBy: string | null,
+    ) {
+        if (!requestedBy) throw new UnauthorizedException('Authenticated administrator required');
+        try {
+            const result = await this.machinesRepository.authorizeWarpTakeover({
+                machineUuid: uuid,
+                planUuid,
+                confirmation: dto.confirmation,
+                requestedBy,
+                now: new Date(),
+            });
+            await this.machineControlGateway.dispatchReady(uuid);
+            return result;
+        } catch (error) {
+            if (error instanceof ProvisioningError) {
+                switch (error.reason) {
+                    case 'PLAN_NOT_FOUND':
+                        throw new NotFoundException('Machine provisioning plan not found');
+                    case 'WARP_TAKEOVER_NOT_ALLOWED':
+                    case 'PLAN_NOT_READY':
+                        throw new ConflictException(
+                            'This plan is not eligible for external WARP takeover',
+                        );
+                    case 'MACHINE_NOT_FOUND':
+                        throw new NotFoundException('Machine not found');
+                    case 'MACHINE_NOT_ENROLLED':
+                        throw new ConflictException('Machine Agent has not enrolled yet');
+                    case 'MACHINE_OFFLINE':
+                        throw new ConflictException('Machine Agent is offline');
+                    case 'MACHINE_AGENT_CAPABILITY_MISSING':
+                        throw new ConflictException(
+                            'Machine Agent must be upgraded before WARP takeover',
+                        );
+                }
             }
             throw error;
         }
@@ -345,15 +521,6 @@ export class MachinesService {
                 nodeSecrets,
                 now: new Date(),
             });
-            await Promise.all(
-                result.nodeUuids.map((nodeUuid) =>
-                    this.nodesQueuesService.startNode({
-                        nodeUuid,
-                        force: true,
-                        managedConfigUpdate: true,
-                    }),
-                ),
-            );
             await this.machineControlGateway.dispatchReady(uuid);
             return {
                 machine: new MachineResponseModel(result.machine),
@@ -377,6 +544,8 @@ export class MachinesService {
                         );
                     case 'RETRY_NODE_INVALID':
                         throw new ConflictException('Managed node metadata is incomplete');
+                    case 'RETRY_NODE_NOT_RETRYABLE':
+                        throw new ConflictException('Only failed or degraded nodes may be retried');
                     case 'RETRY_ALREADY_RUNNING':
                         throw new ConflictException('A retry is already running for this node');
                     case 'NODE_CREDENTIALS_MISSING':

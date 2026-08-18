@@ -25,8 +25,11 @@ export class MachineEntity implements Machines {
     clientCertFingerprint: string | null;
     clientCertExpiresAt: Date | null;
     warpStatus: string;
+    warpOwnership: string;
     warpProxyPort: number | null;
     warpLastChecked: Date | null;
+    lastErrorCode: string | null;
+    lastStatusMessage: string | null;
     archivedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;

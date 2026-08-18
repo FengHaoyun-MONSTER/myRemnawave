@@ -5,7 +5,7 @@ These instructions supplement the user's global engineering protocol.
 ## Scope and safety
 
 - The approved product contract is
-  `docs/requirements/requirements-baseline-v1.0.md`.
+  `docs/requirements/requirements-baseline-v1.1.md`.
 - This repository targets fresh development/test installations. Do not add
   production deployment or existing-data migration behavior without updating
   the baseline and obtaining approval.
@@ -15,6 +15,25 @@ These instructions supplement the user's global engineering protocol.
   command, store SSH credentials in the panel, or upload private keys.
 - Do not push, publish images, run a GitHub deployment workflow, or mutate a
   remote test server without explicit authorization for that external action.
+
+## Branch discipline
+
+- Treat `main` as a read-only local mirror of `origin/main`. Never create a
+  commit on `main`, never push it directly, and never deploy a feature-branch
+  commit.
+- Before starting work, fetch and prune the remote, verify GitHub's default
+  branch, update local `main` to the exact `origin/main` commit, then create an
+  `agent/<short-description>` branch.
+- Before every push, verify that the working tree and index contain only the
+  intended scope, `origin/main` is an ancestor of the feature branch, and the
+  target remote is the repository named by `gh repo view`.
+- Changes reach `main` only through a pull request with all required CI checks.
+  Test-panel deployment runs only from the exact merged commit on `main`.
+- If work is accidentally committed on `main`, first create a named feature
+  branch at the current commit. Only after verifying that reference may local
+  `main` be reset to `origin/main`; never rewrite or force-push remote history.
+- Enable the repository hooks with `git config core.hooksPath .githooks` after
+  cloning. GitHub branch protection remains the authoritative server-side gate.
 
 ## Repository layout
 

@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+branch="$(git symbolic-ref --quiet --short HEAD || true)"
+case "${branch}" in
+    agent/*)
+        exit 0
+        ;;
+    main|master)
+        echo "Direct commits on ${branch} are blocked. Create an agent/<description> branch." >&2
+        ;;
+    '')
+        echo 'Commits from a detached HEAD are blocked. Create an agent/<description> branch.' >&2
+        ;;
+    *)
+        echo "Branch ${branch} is not allowed. Use agent/<description>." >&2
+        ;;
+esac
+exit 1

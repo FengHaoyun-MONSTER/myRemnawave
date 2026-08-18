@@ -11,6 +11,9 @@ import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } fro
 
 import { TypedConfigService } from '@common/config/app-config';
 import { generateMachineControlServerCertificate } from '@common/utils/certs/generate-machine-control-server-cert.util';
+import { MachineProvisioningPlanResultSchema } from '@libs/contracts/models';
+
+import { NodesQueuesService } from '@queue/_nodes';
 
 import {
     agentEnvelopeSchema,
@@ -62,11 +65,25 @@ const reconcileInstanceResultSchema = z
         instanceId: z.uuid(),
         containerName: z.string().regex(/^myremnawave-[0-9a-f]{16}$/),
         configHash: z.string().regex(/^[0-9a-f]{64}$/),
+        externalPort: z.int().min(1).max(65535),
         realityPublicKey: z.string().max(128).optional(),
         realityShortId: z
             .string()
             .regex(/^[0-9a-f]{16}$/)
             .optional(),
+    })
+    .strict();
+
+const reconcileDependencyResultSchema = z
+    .object({
+        name: z.literal('docker'),
+        status: z.enum([
+            'REUSED_EXTERNAL',
+            'REUSED_MANAGED',
+            'INSTALLED_MANAGED',
+            'REPAIRED_MANAGED',
+        ]),
+        version: z.string().min(1).max(128),
     })
     .strict();
 
@@ -85,6 +102,15 @@ const reconcileWarpResultSchema = z
         proxyPort: z.literal(40000),
         version: z.string().min(1).max(128),
         status: z.literal('CONNECTED'),
+        ownership: z.enum(['MANAGED', 'EXTERNAL']),
+    })
+    .strict();
+
+const authorizeWarpTakeoverResultSchema = z
+    .object({
+        planId: z.uuid(),
+        ownership: z.enum(['ADOPTED', 'MANAGED']),
+        message: z.string().min(1).max(1024),
     })
     .strict();
 
@@ -119,6 +145,7 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
     constructor(
         private readonly config: TypedConfigService,
         private readonly machinesRepository: MachinesRepository,
+        private readonly nodesQueuesService: NodesQueuesService,
     ) {}
 
     async onApplicationBootstrap(): Promise<void> {
@@ -324,7 +351,7 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
             state.helloReceived = true;
             await this.machinesRepository.resetRunningCommands(state.machineUuid);
             await this.machinesRepository.ensureInventoryCommand(state.machineUuid, new Date());
-            await this.machinesRepository.ensureWarpCommand(state.machineUuid, new Date());
+            await this.machinesRepository.ensureWarpCommand(state.machineUuid, new Date(), true);
             await this.sendReadyCommands(webSocket, state.machineUuid);
             return;
         }
@@ -354,33 +381,63 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
                 ? result.payload
                 : commandKind === 'inventory'
                   ? inventorySchema.parse(result.payload)
-                  : commandKind === 'preflight'
-                    ? preflightResultSchema.parse(result.payload)
-                    : commandKind === 'reconcile_instance'
-                      ? reconcileInstanceResultSchema.parse(result.payload)
-                      : commandKind === 'reconcile_certificate'
-                        ? reconcileCertificateResultSchema.parse(result.payload)
-                        : commandKind === 'reconcile_warp'
-                          ? reconcileWarpResultSchema.parse(result.payload)
-                          : commandKind === 'apply_config'
-                            ? applyConfigResultSchema.parse(result.payload)
-                            : commandKind === 'start_instance' || commandKind === 'stop_instance'
-                              ? lifecycleResultSchema.parse(result.payload)
-                              : result.payload;
+                  : commandKind === 'discover_host'
+                    ? sanitizeProvisioningPlanResult(
+                          MachineProvisioningPlanResultSchema.parse(result.payload),
+                      )
+                    : commandKind === 'reconcile_dependency'
+                      ? reconcileDependencyResultSchema.parse(result.payload)
+                      : commandKind === 'preflight'
+                        ? preflightResultSchema.parse(result.payload)
+                        : commandKind === 'reconcile_instance'
+                          ? reconcileInstanceResultSchema.parse(result.payload)
+                          : commandKind === 'reconcile_certificate'
+                            ? reconcileCertificateResultSchema.parse(result.payload)
+                            : commandKind === 'reconcile_warp'
+                              ? reconcileWarpResultSchema.parse(result.payload)
+                              : commandKind === 'authorize_warp_takeover'
+                                ? authorizeWarpTakeoverResultSchema.parse(result.payload)
+                                : commandKind === 'apply_config'
+                                  ? applyConfigResultSchema.parse(result.payload)
+                                  : commandKind === 'start_instance' ||
+                                      commandKind === 'stop_instance'
+                                    ? lifecycleResultSchema.parse(result.payload)
+                                    : result.payload;
         const preflightFailed =
             commandKind === 'preflight' &&
             result.status === 'succeeded' &&
             preflightResultSchema.parse(validatedResult).ok === false;
+        const preflightFailureCode = preflightFailed
+            ? preflightResultSchema
+                  .parse(validatedResult)
+                  .checks.some((check) => !check.ok && !check.name.startsWith('port_'))
+                ? 'PREFLIGHT_MACHINE_FAILED'
+                : 'PREFLIGHT_PROTOCOL_FAILED'
+            : undefined;
+        const errorMessage = preflightFailed
+            ? summarizePreflightFailure(preflightResultSchema.parse(validatedResult))
+            : result.status === 'succeeded'
+              ? undefined
+              : sanitizeAgentMessage(result.message);
         const accepted = await this.machinesRepository.completeCommand({
             machineUuid: state.machineUuid,
             commandUuid: result.commandId,
             idempotencyKey: result.idempotencyKey,
             status: preflightFailed ? 'failed' : result.status,
-            errorCode: preflightFailed ? 'PREFLIGHT_FAILED' : result.errorCode,
+            errorCode: preflightFailureCode ?? result.errorCode,
+            errorMessage,
             result: validatedResult,
             completedAt: new Date(),
         });
         if (!accepted) throw new Error('unknown or already completed command result');
+        if (commandKind === 'reconcile_instance' && result.status === 'succeeded') {
+            const reconciled = reconcileInstanceResultSchema.parse(validatedResult);
+            await this.nodesQueuesService.startNode({
+                nodeUuid: reconciled.instanceId,
+                force: true,
+                managedConfigUpdate: true,
+            });
+        }
         await this.sendReadyCommands(webSocket, state.machineUuid);
     }
 
@@ -437,4 +494,60 @@ function toBuffers(data: Buffer | ArrayBuffer | Buffer[]): Buffer[] {
 function safeError(error: unknown): string {
     const message = error instanceof Error ? error.message : 'unknown error';
     return message.slice(0, 1024).replaceAll('\0', '');
+}
+
+function summarizePreflightFailure(result: z.infer<typeof preflightResultSchema>): string {
+    const message = result.checks
+        .filter((check) => !check.ok)
+        .map((check) => `${check.name}: ${check.message}`)
+        .join('; ');
+    return (
+        sanitizeAgentMessage(message || 'Machine preflight failed') ?? 'Machine preflight failed'
+    );
+}
+
+function sanitizeAgentMessage(message: string | undefined): string | undefined {
+    if (!message) return undefined;
+    const redacted = message
+        .replaceAll('\0', '')
+        .replace(
+            /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi,
+            '[REDACTED PRIVATE KEY]',
+        )
+        .replace(/mrw_enroll_[A-Za-z0-9_-]+/g, '[REDACTED]')
+        .replace(/(bearer\s+)[^\s,;]+/gi, '$1[REDACTED]')
+        .replace(
+            /((?:token|secret|password|private[_-]?key|client[_-]?key)\s*[:=]\s*)[^\s,;]+/gi,
+            '$1[REDACTED]',
+        );
+    return redacted.slice(0, 1024);
+}
+
+function sanitizeProvisioningPlanResult(
+    result: z.infer<typeof MachineProvisioningPlanResultSchema>,
+): z.infer<typeof MachineProvisioningPlanResultSchema> {
+    const safeMessage = (message: string): string => sanitizeAgentMessage(message) ?? '';
+    return {
+        ...result,
+        machineChecks: result.machineChecks.map((check) => ({
+            ...check,
+            message: safeMessage(check.message),
+        })),
+        dependencies: result.dependencies.map((dependency) => ({
+            ...dependency,
+            message: safeMessage(dependency.message),
+        })),
+        protocols: result.protocols.map((protocol) => ({
+            ...protocol,
+            ...(protocol.message ? { message: safeMessage(protocol.message) } : {}),
+            checks: protocol.checks.map((check) => ({
+                ...check,
+                message: safeMessage(check.message),
+            })),
+            portAttempts: protocol.portAttempts.map((attempt) => ({
+                ...attempt,
+                message: safeMessage(attempt.message),
+            })),
+        })),
+    };
 }

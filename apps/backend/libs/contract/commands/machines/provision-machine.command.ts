@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { MACHINES_ROUTES, REST_API } from '../../api';
 import { getEndpointDetails } from '../../constants';
-import { MachineSchema } from '../../models';
+import { MachineProvisioningPlanSchema, MachineSchema } from '../../models';
 
 const DomainSchema = z
     .string()
@@ -32,11 +32,29 @@ const CertificateSchema = z.discriminatedUnion('mode', [
         .strict(),
 ]);
 
+const FallbackPortsSchema = z
+    .array(z.int().min(1).max(65535))
+    .max(15)
+    .refine((ports) => new Set(ports).size === ports.length, 'Fallback ports must be unique')
+    .refine(
+        (ports) => ports.every((port) => ![2222, 2223, 2224].includes(port)),
+        'Machine control ports 2222-2224 are reserved',
+    );
+
+const ExternalPortSchema = (defaultPort: number) =>
+    z
+        .int()
+        .min(1)
+        .max(65535)
+        .refine((port) => ![2222, 2223, 2224].includes(port), 'Machine control port is reserved')
+        .default(defaultPort);
+
 const RealitySchema = z
     .object({
         protocol: z.literal('VLESS_REALITY'),
         remark: z.string().trim().min(1).max(100).optional(),
-        externalPort: z.int().min(1).max(65535).default(443),
+        externalPort: ExternalPortSchema(443),
+        fallbackPorts: FallbackPortsSchema.optional(),
         serverName: DomainSchema.default('www.microsoft.com'),
         target: z.string().trim().min(3).max(255).default('www.microsoft.com:443'),
     })
@@ -46,7 +64,8 @@ const TlsVisionSchema = z
     .object({
         protocol: z.literal('VLESS_TLS_VISION'),
         remark: z.string().trim().min(1).max(100).optional(),
-        externalPort: z.int().min(1).max(65535).default(8443),
+        externalPort: ExternalPortSchema(8443),
+        fallbackPorts: FallbackPortsSchema.optional(),
         certificate: CertificateSchema,
     })
     .strict();
@@ -55,7 +74,8 @@ const Hysteria2Schema = z
     .object({
         protocol: z.literal('HYSTERIA2'),
         remark: z.string().trim().min(1).max(100).optional(),
-        externalPort: z.int().min(1).max(65535).default(443),
+        externalPort: ExternalPortSchema(443),
+        fallbackPorts: FallbackPortsSchema.optional(),
         certificate: CertificateSchema,
         congestion: z.enum(['bbr', 'brutal']).optional(),
         upMbps: z.int().positive().max(100_000).optional(),
@@ -69,7 +89,7 @@ export namespace ProvisionMachineCommand {
     export const endpointDetails = getEndpointDetails(
         MACHINES_ROUTES.ACTIONS.PROVISION(':uuid'),
         'post',
-        'Provision protocol instances on a machine',
+        'Discover resources and plan protocol instances on a machine',
         { scope: 'provision', kind: 'write' },
     );
 
@@ -116,8 +136,8 @@ export namespace ProvisionMachineCommand {
     export const ResponseSchema = z.object({
         response: z.object({
             machine: MachineSchema,
-            nodeUuids: z.array(z.uuid()),
-            commandUuids: z.array(z.uuid()),
+            plan: MachineProvisioningPlanSchema,
+            commandUuid: z.uuid(),
         }),
     });
 

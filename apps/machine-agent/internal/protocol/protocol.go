@@ -22,20 +22,23 @@ const (
 )
 
 const (
-	CommandInventory            = "inventory"
-	CommandPreflight            = "preflight"
-	CommandReconcileInstance    = "reconcile_instance"
-	CommandReconcileCertificate = "reconcile_certificate"
-	CommandReconcileWARP        = "reconcile_warp"
-	CommandStartInstance        = "start_instance"
-	CommandStopInstance         = "stop_instance"
-	CommandDrainInstance        = "drain_instance"
-	CommandInspectInstance      = "inspect_instance"
-	CommandApplyConfig          = "apply_config"
-	CommandStageUpdate          = "stage_update"
-	CommandApplyUpdate          = "apply_update"
-	CommandVerifyUpdate         = "verify_update"
-	CommandRollbackUpdate       = "rollback_update"
+	CommandInventory             = "inventory"
+	CommandDiscoverHost          = "discover_host"
+	CommandReconcileDependency   = "reconcile_dependency"
+	CommandPreflight             = "preflight"
+	CommandReconcileInstance     = "reconcile_instance"
+	CommandReconcileCertificate  = "reconcile_certificate"
+	CommandReconcileWARP         = "reconcile_warp"
+	CommandAuthorizeWARPTakeover = "authorize_warp_takeover"
+	CommandStartInstance         = "start_instance"
+	CommandStopInstance          = "stop_instance"
+	CommandDrainInstance         = "drain_instance"
+	CommandInspectInstance       = "inspect_instance"
+	CommandApplyConfig           = "apply_config"
+	CommandStageUpdate           = "stage_update"
+	CommandApplyUpdate           = "apply_update"
+	CommandVerifyUpdate          = "verify_update"
+	CommandRollbackUpdate        = "rollback_update"
 )
 
 const (
@@ -176,10 +179,13 @@ func (c Command) Validate(now time.Time) error {
 func IsKnownCommand(kind string) bool {
 	switch kind {
 	case CommandInventory,
+		CommandDiscoverHost,
+		CommandReconcileDependency,
 		CommandPreflight,
 		CommandReconcileInstance,
 		CommandReconcileCertificate,
 		CommandReconcileWARP,
+		CommandAuthorizeWARPTakeover,
 		CommandStartInstance,
 		CommandStopInstance,
 		CommandDrainInstance,

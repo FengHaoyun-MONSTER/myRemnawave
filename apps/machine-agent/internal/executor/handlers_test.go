@@ -21,3 +21,34 @@ func TestResourceChecksAcceptMinimumMachine(t *testing.T) {
 		t.Fatal("expected the documented minimum machine to pass resource preflight")
 	}
 }
+
+func TestSupportedOSVersionsIncludeDebian13(t *testing.T) {
+	tests := []struct {
+		id      string
+		version string
+		want    bool
+	}{
+		{id: "debian", version: "12", want: true},
+		{id: "debian", version: "13", want: true},
+		{id: "ubuntu", version: "22.04", want: true},
+		{id: "ubuntu", version: "24.04.3", want: true},
+		{id: "debian", version: "11", want: false},
+		{id: "ubuntu", version: "20.04", want: false},
+	}
+	for _, test := range tests {
+		if got := supportsOS(test.id, test.version); got != test.want {
+			t.Errorf("supportsOS(%q, %q) = %v, want %v", test.id, test.version, got, test.want)
+		}
+	}
+}
+
+func TestDependencyPreflightCanDelayDockerRequirement(t *testing.T) {
+	falseValue := false
+	trueValue := true
+	if preflightRequiresDocker(PreflightRequest{RequireDocker: &falseValue}) {
+		t.Fatal("machine-level dependency preflight must not require Docker before its approved install action")
+	}
+	if !preflightRequiresDocker(PreflightRequest{}) || !preflightRequiresDocker(PreflightRequest{RequireDocker: &trueValue}) {
+		t.Fatal("protocol preflight must require a usable Docker runtime by default")
+	}
+}

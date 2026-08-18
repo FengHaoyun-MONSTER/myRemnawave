@@ -15,8 +15,11 @@ export class MachineResponseModel {
     systemInfo: unknown | null;
     clientCertExpiresAt: Date | null;
     warpStatus: string;
+    warpOwnership: string;
     warpProxyPort: number | null;
     warpLastChecked: Date | null;
+    lastErrorCode: string | null;
+    lastStatusMessage: string | null;
     archivedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
@@ -36,8 +39,11 @@ export class MachineResponseModel {
         this.systemInfo = machine.systemInfo;
         this.clientCertExpiresAt = machine.clientCertExpiresAt;
         this.warpStatus = machine.warpStatus;
+        this.warpOwnership = machine.warpOwnership;
         this.warpProxyPort = machine.warpProxyPort;
         this.warpLastChecked = machine.warpLastChecked;
+        this.lastErrorCode = machine.lastErrorCode;
+        this.lastStatusMessage = machine.lastStatusMessage;
         this.archivedAt = machine.archivedAt;
         this.createdAt = machine.createdAt;
         this.updatedAt = machine.updatedAt;

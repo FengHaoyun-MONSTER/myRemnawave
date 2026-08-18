@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/certificate"
+	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/dependency"
+	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/discovery"
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/instance"
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/inventory"
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/nodeconfig"
@@ -37,7 +40,9 @@ type PortRequirement struct {
 }
 
 type PreflightRequest struct {
-	Ports []PortRequirement `json:"ports"`
+	InstanceID    string            `json:"instanceId,omitempty"`
+	Ports         []PortRequirement `json:"ports"`
+	RequireDocker *bool             `json:"requireDocker,omitempty"`
 }
 
 type Check struct {
@@ -69,13 +74,20 @@ func (h PreflightHandler) Execute(ctx context.Context, payload json.RawMessage) 
 	if len(request.Ports) > 32 {
 		return nil, &Error{Code: "TOO_MANY_PORTS", Message: "at most 32 ports may be checked"}
 	}
+	if request.InstanceID != "" && !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(request.InstanceID) {
+		return nil, &Error{Code: "INVALID_PREFLIGHT_PAYLOAD", Message: "instanceId must be a lowercase UUID"}
+	}
 	system, err := inventory.Collect(h.ManagedRoot)
 	if err != nil {
 		return nil, &Error{Code: "INVENTORY_FAILED", Message: err.Error()}
 	}
 	checks := []Check{supportedOSCheck(system), memoryCheck(system), diskCheck(system)}
-	checks = append(checks, commandCheck(ctx, "docker", "docker", "version", "--format", "{{.Server.Version}}"))
+	if preflightRequiresDocker(request) {
+		checks = append(checks, commandCheck(ctx, "docker", "docker", "version", "--format", "{{.Server.Version}}"))
+	}
 	checks = append(checks, commandCheck(ctx, "systemd", "systemctl", "--version"))
+	clock := discovery.ClockSynchronizationCheck(ctx)
+	checks = append(checks, Check{Name: "clock_synchronized", OK: clock.OK, Message: clock.Message})
 	for _, requirement := range request.Ports {
 		checks = append(checks, portCheck(requirement))
 	}
@@ -86,6 +98,10 @@ func (h PreflightHandler) Execute(ctx context.Context, payload json.RawMessage) 
 		}
 	}
 	return PreflightResult{System: system, Checks: checks, OK: ok}, nil
+}
+
+func preflightRequiresDocker(request PreflightRequest) bool {
+	return request.RequireDocker == nil || *request.RequireDocker
 }
 
 func memoryCheck(system inventory.System) Check {
@@ -106,22 +122,27 @@ func diskCheck(system inventory.System) Check {
 	}
 }
 
-func DefaultHandlers(managedRoot string) map[string]Handler {
+func DefaultHandlers(managedRoot, machineID string) map[string]Handler {
 	return map[string]Handler{
 		protocol.CommandInventory:            InventoryHandler{ManagedRoot: managedRoot},
+		protocol.CommandDiscoverHost:         discovery.Handler{ManagedRoot: managedRoot, MachineID: machineID},
+		protocol.CommandReconcileDependency:  dependency.Handler{ManagedRoot: managedRoot, MachineID: machineID},
 		protocol.CommandPreflight:            PreflightHandler{ManagedRoot: managedRoot},
-		protocol.CommandReconcileInstance:    instance.Handler{ManagedRoot: managedRoot},
+		protocol.CommandReconcileInstance:    instance.Handler{ManagedRoot: managedRoot, MachineID: machineID},
 		protocol.CommandReconcileCertificate: certificate.Handler{ManagedRoot: managedRoot},
-		protocol.CommandReconcileWARP:        warp.NewHandler(managedRoot),
-		protocol.CommandApplyConfig:          nodeconfig.Handler{ManagedRoot: managedRoot},
-		protocol.CommandStartInstance:        instance.LifecycleHandler{Start: true},
-		protocol.CommandStopInstance:         instance.LifecycleHandler{Start: false},
+		protocol.CommandReconcileWARP:        warp.NewHandler(managedRoot, machineID),
+		protocol.CommandAuthorizeWARPTakeover: warp.TakeoverHandler{
+			ManagedRoot: managedRoot,
+			MachineID:   machineID,
+		},
+		protocol.CommandApplyConfig:   nodeconfig.Handler{ManagedRoot: managedRoot},
+		protocol.CommandStartInstance: instance.LifecycleHandler{Start: true, MachineID: machineID},
+		protocol.CommandStopInstance:  instance.LifecycleHandler{Start: false, MachineID: machineID},
 	}
 }
 
 func supportedOSCheck(system inventory.System) Check {
-	ok := (system.OSID == "debian" && system.OSVersion == "12") ||
-		(system.OSID == "ubuntu" && (strings.HasPrefix(system.OSVersion, "22.04") || strings.HasPrefix(system.OSVersion, "24.04")))
+	ok := supportsOS(system.OSID, system.OSVersion)
 	message := system.OSPrettyName
 	if runtime.GOOS != "linux" {
 		ok = false
@@ -130,6 +151,11 @@ func supportedOSCheck(system inventory.System) Check {
 		message = fmt.Sprintf("unsupported operating system %s %s", system.OSID, system.OSVersion)
 	}
 	return Check{Name: "operating_system", OK: ok, Message: message}
+}
+
+func supportsOS(id, version string) bool {
+	return (id == "debian" && (version == "12" || version == "13")) ||
+		(id == "ubuntu" && (strings.HasPrefix(version, "22.04") || strings.HasPrefix(version, "24.04")))
 }
 
 func commandCheck(ctx context.Context, name, binary string, arguments ...string) Check {

@@ -7,10 +7,16 @@ export const MACHINES_ROUTES = {
     GET: '',
     GET_CONTROL_STATUS: 'control-status',
     GET_BY_UUID: (uuid: string) => uuid,
+    GET_PROVISIONING_PLAN: (uuid: string, planUuid: string) =>
+        `${uuid}/provisioning-plans/${planUuid}`,
     ACTIONS: {
         ROTATE_ENROLLMENT_TOKEN: (uuid: string) =>
             `${uuid}/${ACTIONS_ROUTE}/rotate-enrollment-token`,
         PROVISION: (uuid: string) => `${uuid}/${ACTIONS_ROUTE}/provision`,
+        APPLY_PROVISIONING_PLAN: (uuid: string, planUuid: string) =>
+            `${uuid}/${ACTIONS_ROUTE}/provision/${planUuid}/apply`,
+        AUTHORIZE_WARP_TAKEOVER: (uuid: string, planUuid: string) =>
+            `${uuid}/${ACTIONS_ROUTE}/provision/${planUuid}/warp-takeover`,
         RETRY: (uuid: string) => `${uuid}/${ACTIONS_ROUTE}/retry`,
         PUBLISH: (uuid: string) => `${uuid}/${ACTIONS_ROUTE}/publish`,
     },

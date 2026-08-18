@@ -19,8 +19,9 @@ type LifecycleResult struct {
 }
 
 type LifecycleHandler struct {
-	Runner Runner
-	Start  bool
+	Runner    Runner
+	Start     bool
+	MachineID string
 }
 
 func (h LifecycleHandler) Execute(ctx context.Context, payload json.RawMessage) (any, error) {
@@ -30,11 +31,24 @@ func (h LifecycleHandler) Execute(ctx context.Context, payload json.RawMessage) 
 	if err := decoder.Decode(&request); err != nil || !uuidPattern.MatchString(request.InstanceID) {
 		return nil, errors.New("invalid instance lifecycle payload")
 	}
+	if !uuidPattern.MatchString(h.MachineID) {
+		return nil, errors.New("Machine ownership identity is invalid")
+	}
 	runner := h.Runner
 	if runner == nil {
 		runner = DockerRunner{}
 	}
 	containerName := "myremnawave-" + strings.ReplaceAll(request.InstanceID, "-", "")[:16]
+	exists, _, err := inspectContainer(ctx, runner, containerName, h.MachineID, request.InstanceID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		if h.Start {
+			return nil, errors.New("CONTAINER_NOT_FOUND: managed instance container does not exist")
+		}
+		return LifecycleResult{InstanceID: request.InstanceID, State: "STOPPED"}, nil
+	}
 	if h.Start {
 		if output, err := runner.Run(ctx, "start", containerName); err != nil {
 			return nil, commandError("CONTAINER_START_FAILED", output, err)

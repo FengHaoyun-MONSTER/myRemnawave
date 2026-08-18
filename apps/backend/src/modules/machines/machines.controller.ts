@@ -9,6 +9,7 @@ import { Body, Controller, HttpStatus, Param, UseFilters, UseGuards } from '@nes
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { Endpoint } from '@common/decorators/base-endpoint';
+import { GetJWTPayload } from '@common/decorators/get-jwt-payload/get-jwt-payload';
 import { Roles } from '@common/decorators/roles/roles';
 import { ApiScopeResource } from '@common/decorators/scopes';
 import { HttpExceptionFilter } from '@common/exception/http-exception.filter';
@@ -17,9 +18,12 @@ import { RolesGuard } from '@common/guards/roles/roles.guard';
 import { ScopesGuard } from '@common/guards/scopes';
 import {
     CreateMachineCommand,
+    ApplyMachineProvisioningPlanCommand,
+    AuthorizeMachineWarpTakeoverCommand,
     EnrollMachineCommand,
     GetMachineCommand,
     GetMachineControlStatusCommand,
+    GetMachineProvisioningPlanCommand,
     GetMachinesCommand,
     ProvisionMachineCommand,
     PublishMachineCommand,
@@ -27,13 +31,23 @@ import {
     RotateMachineEnrollmentTokenCommand,
 } from '@libs/contracts/commands';
 
+import type { IJWTAuthPayload } from '@modules/auth/interfaces';
+
 import {
     CreateMachineBodyDto,
+    ApplyMachineProvisioningPlanBodyDto,
+    ApplyMachineProvisioningPlanParamDto,
+    ApplyMachineProvisioningPlanResponseDto,
+    AuthorizeMachineWarpTakeoverBodyDto,
+    AuthorizeMachineWarpTakeoverParamDto,
+    AuthorizeMachineWarpTakeoverResponseDto,
     CreateMachineResponseDto,
     EnrollMachineBodyDto,
     EnrollMachineResponseDto,
     GetMachineParamDto,
     GetMachineControlStatusResponseDto,
+    GetMachineProvisioningPlanParamDto,
+    GetMachineProvisioningPlanResponseDto,
     GetMachineResponseDto,
     GetMachinesResponseDto,
     ProvisionMachineBodyDto,
@@ -97,6 +111,17 @@ export class MachinesController {
     }
 
     @Endpoint({
+        type: GetMachineProvisioningPlanResponseDto,
+        command: GetMachineProvisioningPlanCommand,
+        httpCode: HttpStatus.OK,
+    })
+    async getMachineProvisioningPlan(@Param() params: GetMachineProvisioningPlanParamDto) {
+        return {
+            response: await this.machinesService.getProvisioningPlan(params.uuid, params.planUuid),
+        };
+    }
+
+    @Endpoint({
         type: RotateMachineEnrollmentTokenResponseDto,
         command: RotateMachineEnrollmentTokenCommand,
         httpCode: HttpStatus.OK,
@@ -117,6 +142,44 @@ export class MachinesController {
         @Body() body: ProvisionMachineBodyDto,
     ) {
         return { response: await this.machinesService.provision(params.uuid, body) };
+    }
+
+    @Endpoint({
+        type: ApplyMachineProvisioningPlanResponseDto,
+        command: ApplyMachineProvisioningPlanCommand,
+        httpCode: HttpStatus.CREATED,
+    })
+    async applyMachineProvisioningPlan(
+        @Param() params: ApplyMachineProvisioningPlanParamDto,
+        @Body() _body: ApplyMachineProvisioningPlanBodyDto,
+    ) {
+        return {
+            response: await this.machinesService.applyProvisioningPlan(
+                params.uuid,
+                params.planUuid,
+            ),
+        };
+    }
+
+    @Roles(ROLE.ADMIN)
+    @Endpoint({
+        type: AuthorizeMachineWarpTakeoverResponseDto,
+        command: AuthorizeMachineWarpTakeoverCommand,
+        httpCode: HttpStatus.CREATED,
+    })
+    async authorizeMachineWarpTakeover(
+        @Param() params: AuthorizeMachineWarpTakeoverParamDto,
+        @Body() body: AuthorizeMachineWarpTakeoverBodyDto,
+        @GetJWTPayload() actor: IJWTAuthPayload,
+    ) {
+        return {
+            response: await this.machinesService.authorizeWarpTakeover(
+                params.uuid,
+                params.planUuid,
+                body,
+                actor.uuid,
+            ),
+        };
     }
 
     @Endpoint({
