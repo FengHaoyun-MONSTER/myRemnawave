@@ -99,6 +99,8 @@ export const REST_API = {
                 `${ROOT}/${CONTROLLERS.MACHINES_CONTROLLER}/${CONTROLLERS.MACHINES_ROUTES.ACTIONS.PROVISION(uuid)}`,
             APPLY_PROVISIONING_PLAN: (uuid: string, planUuid: string) =>
                 `${ROOT}/${CONTROLLERS.MACHINES_CONTROLLER}/${CONTROLLERS.MACHINES_ROUTES.ACTIONS.APPLY_PROVISIONING_PLAN(uuid, planUuid)}`,
+            AUTHORIZE_WARP_TAKEOVER: (uuid: string, planUuid: string) =>
+                `${ROOT}/${CONTROLLERS.MACHINES_CONTROLLER}/${CONTROLLERS.MACHINES_ROUTES.ACTIONS.AUTHORIZE_WARP_TAKEOVER(uuid, planUuid)}`,
             RETRY: (uuid: string) =>
                 `${ROOT}/${CONTROLLERS.MACHINES_CONTROLLER}/${CONTROLLERS.MACHINES_ROUTES.ACTIONS.RETRY(uuid)}`,
             PUBLISH: (uuid: string) =>

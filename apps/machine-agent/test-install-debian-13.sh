@@ -3,10 +3,10 @@
 set -eu
 
 installer="${1:-./install.sh}"
-grep -F -- '--no-install-recommends docker.io docker-cli' "$installer" >/dev/null || {
-    echo "Debian 13 installer must explicitly install docker-cli with docker.io" >&2
+if grep -F -- 'systemctl enable --now docker' "$installer" >/dev/null; then
+    echo "enrollment installer must not start or modify Docker" >&2
     exit 1
-}
+fi
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT HUP INT TERM
 
@@ -24,7 +24,7 @@ chmod 0755 "$work_dir/apt-get" "$work_dir/curl"
 
 output="$work_dir/output"
 if PATH="$work_dir:$PATH" sh "$installer" \
-    --version v0.1.2 \
+    --version v0.2.0 \
     --panel-url https://panel.example.com/api/machine-enrollment \
     --token mrw_enroll_test >"$output" 2>&1; then
     echo "installer unexpectedly passed a failed panel preflight" >&2
@@ -43,7 +43,7 @@ MOCK
 chmod 0755 "$work_dir/curl"
 
 if PATH="$work_dir:$PATH" sh "$installer" \
-    --version v0.1.2 \
+    --version v0.2.0 \
     --panel-url https://panel.example.com/api/machine-enrollment \
     --token mrw_enroll_test >"$output" 2>&1; then
     echo "installer unexpectedly completed with the package manager mocked" >&2

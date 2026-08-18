@@ -318,6 +318,7 @@ model MachineCommands {
   result         Json?     @map("result")
   errorCode      String?   @map("error_code") @db.VarChar(64)
   errorMessage   String?   @map("error_message") @db.VarChar(1024)
+  requestedBy    String?   @map("requested_by") @db.VarChar(128)
   deadlineAt     DateTime  @map("deadline_at")
   startedAt      DateTime? @map("started_at")
   completedAt    DateTime? @map("completed_at")

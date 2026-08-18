@@ -15,6 +15,8 @@ export const MACHINES_ROUTES = {
         PROVISION: (uuid: string) => `${uuid}/${ACTIONS_ROUTE}/provision`,
         APPLY_PROVISIONING_PLAN: (uuid: string, planUuid: string) =>
             `${uuid}/${ACTIONS_ROUTE}/provision/${planUuid}/apply`,
+        AUTHORIZE_WARP_TAKEOVER: (uuid: string, planUuid: string) =>
+            `${uuid}/${ACTIONS_ROUTE}/provision/${planUuid}/warp-takeover`,
         RETRY: (uuid: string) => `${uuid}/${ACTIONS_ROUTE}/retry`,
         PUBLISH: (uuid: string) => `${uuid}/${ACTIONS_ROUTE}/publish`,
     },

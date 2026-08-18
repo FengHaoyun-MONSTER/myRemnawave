@@ -1,6 +1,7 @@
 import {
     CreateMachineCommand,
     ApplyMachineProvisioningPlanCommand,
+    AuthorizeMachineWarpTakeoverCommand,
     EnrollMachineCommand,
     GetMachineControlStatusCommand,
     GetMachineProvisioningPlanCommand,
@@ -52,6 +53,15 @@ export class ApplyMachineProvisioningPlanBodyDto extends createZodDto(
 ) {}
 export class ApplyMachineProvisioningPlanResponseDto extends createZodDto(
     ApplyMachineProvisioningPlanCommand.ResponseSchema,
+) {}
+export class AuthorizeMachineWarpTakeoverParamDto extends createZodDto(
+    AuthorizeMachineWarpTakeoverCommand.RequestParamsSchema,
+) {}
+export class AuthorizeMachineWarpTakeoverBodyDto extends createZodDto(
+    AuthorizeMachineWarpTakeoverCommand.RequestBodySchema,
+) {}
+export class AuthorizeMachineWarpTakeoverResponseDto extends createZodDto(
+    AuthorizeMachineWarpTakeoverCommand.ResponseSchema,
 ) {}
 export class PublishMachineParamDto extends createZodDto(
     PublishMachineCommand.RequestParamSchema,

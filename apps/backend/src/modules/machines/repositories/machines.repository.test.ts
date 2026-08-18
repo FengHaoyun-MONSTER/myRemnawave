@@ -7,6 +7,7 @@ import { MachinesRepository } from './machines.repository';
 const MACHINE_UUID = '123e4567-e89b-42d3-a456-426614174000';
 const NODE_UUID = '123e4567-e89b-42d3-a456-426614174001';
 const COMMAND_UUID = '123e4567-e89b-42d3-a456-426614174002';
+const ADMIN_UUID = '123e4567-e89b-42d3-a456-426614174003';
 
 describe('MachinesRepository command completion', () => {
     it('turns a successful partial discovery into an applicable plan without mutating protocols', async () => {
@@ -218,6 +219,122 @@ describe('MachinesRepository command completion', () => {
                 data: expect.objectContaining({
                     lastErrorCode: 'CONTAINER_RUN_FAILED',
                     lastStatusMessage: 'selected TCP port is already owned by another process',
+                }),
+            }),
+        );
+    });
+
+    it('expires a blocked plan after an audited WARP takeover succeeds', async () => {
+        const planUpdate = vi.fn().mockResolvedValue({ count: 1 });
+        const transaction = {
+            machineCommands: {
+                findFirst: vi.fn().mockResolvedValue({
+                    kind: 'authorize_warp_takeover',
+                    payload: { planId: NODE_UUID },
+                }),
+                updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+            },
+            machineProvisioningPlans: { updateMany: planUpdate },
+            machines: { update: vi.fn().mockResolvedValue({}) },
+        };
+        const repository = repositoryWithTransaction(transaction);
+
+        await repository.completeCommand({
+            machineUuid: MACHINE_UUID,
+            commandUuid: COMMAND_UUID,
+            idempotencyKey: `authorize_warp_takeover:${COMMAND_UUID}`,
+            status: 'succeeded',
+            result: {
+                planId: NODE_UUID,
+                ownership: 'ADOPTED',
+                message: 'ownership recorded',
+            },
+            completedAt: new Date('2026-08-18T00:00:00.000Z'),
+        });
+
+        expect(planUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    uuid: NODE_UUID,
+                    commandUuid: COMMAND_UUID,
+                    status: 'PENDING',
+                }),
+                data: expect.objectContaining({
+                    status: 'EXPIRED',
+                    errorCode: 'WARP_TAKEOVER_APPROVED_REPLAN_REQUIRED',
+                }),
+            }),
+        );
+    });
+});
+
+describe('MachinesRepository WARP takeover authorization', () => {
+    it('queues only a confirmed takeover for an unexpired blocked external-WARP plan', async () => {
+        const commandCreate = vi.fn().mockResolvedValue({});
+        const planUpdate = vi.fn().mockResolvedValue({ count: 1 });
+        const transaction = {
+            machineProvisioningPlans: {
+                findFirst: vi.fn().mockResolvedValue({
+                    uuid: NODE_UUID,
+                    machineUuid: MACHINE_UUID,
+                    status: 'BLOCKED',
+                    result: {
+                        dependencies: [
+                            {
+                                name: 'warp',
+                                state: 'TAKEOVER_REQUIRED',
+                                ownership: 'EXTERNAL',
+                            },
+                        ],
+                    },
+                    expiresAt: new Date('2026-08-18T00:10:00.000Z'),
+                    commandUuid: COMMAND_UUID,
+                    errorCode: 'RESOURCE_PLAN_BLOCKED',
+                }),
+                updateMany: planUpdate,
+            },
+            machineCommands: {
+                create: commandCreate,
+                findFirst: vi.fn(),
+            },
+            machines: {
+                findUnique: vi.fn().mockResolvedValue({
+                    archivedAt: null,
+                    agentLastSeenAt: new Date('2026-08-18T00:00:00.000Z'),
+                    agentCapabilities: ['authorize_warp_takeover'],
+                    clientCertFingerprint: 'a'.repeat(64),
+                }),
+            },
+        };
+        const repository = repositoryWithTransaction(transaction);
+
+        const result = await repository.authorizeWarpTakeover({
+            machineUuid: MACHINE_UUID,
+            planUuid: NODE_UUID,
+            confirmation: 'TAKE_OVER_EXTERNAL_WARP',
+            requestedBy: ADMIN_UUID,
+            now: new Date('2026-08-18T00:01:00.000Z'),
+        });
+
+        expect(result.commandUuid).toMatch(/^[0-9a-f-]{36}$/);
+        expect(commandCreate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    kind: 'authorize_warp_takeover',
+                    requestedBy: ADMIN_UUID,
+                    payload: {
+                        planId: NODE_UUID,
+                        decision: 'TAKE_OVER_EXTERNAL_WARP',
+                        attestNo3xuiUse: true,
+                    },
+                }),
+            }),
+        );
+        expect(planUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    status: 'PENDING',
+                    errorCode: 'WARP_TAKEOVER_PENDING',
                 }),
             }),
         );

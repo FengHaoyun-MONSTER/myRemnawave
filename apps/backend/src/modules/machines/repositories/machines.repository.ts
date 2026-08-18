@@ -78,7 +78,11 @@ export class MachinesRepository {
         const plan = await this.prisma.machineProvisioningPlans.findFirst({
             where: { uuid: planUuid, machineUuid },
         });
-        if (plan && ['PENDING', 'READY'].includes(plan.status) && plan.expiresAt <= new Date()) {
+        if (
+            plan &&
+            ['PENDING', 'READY', 'BLOCKED'].includes(plan.status) &&
+            plan.expiresAt <= new Date()
+        ) {
             return this.prisma.machineProvisioningPlans.update({
                 where: { uuid: plan.uuid },
                 data: {
@@ -148,7 +152,7 @@ export class MachinesRepository {
             const supersededPlans = await transaction.machineProvisioningPlans.findMany({
                 where: {
                     machineUuid: input.machineUuid,
-                    status: { in: ['PENDING', 'READY'] },
+                    status: { in: ['PENDING', 'READY', 'BLOCKED'] },
                     commandUuid: { not: null },
                 },
                 select: { commandUuid: true },
@@ -156,7 +160,7 @@ export class MachinesRepository {
             await transaction.machineProvisioningPlans.updateMany({
                 where: {
                     machineUuid: input.machineUuid,
-                    status: { in: ['PENDING', 'READY'] },
+                    status: { in: ['PENDING', 'READY', 'BLOCKED'] },
                 },
                 data: { status: 'EXPIRED', errorCode: 'PLAN_SUPERSEDED' },
             });
@@ -209,11 +213,115 @@ export class MachinesRepository {
         });
     }
 
+    async authorizeWarpTakeover(input: {
+        machineUuid: string;
+        planUuid: string;
+        confirmation: 'TAKE_OVER_EXTERNAL_WARP';
+        requestedBy: string;
+        now: Date;
+    }): Promise<{ commandUuid: string }> {
+        return this.prisma.$transaction(async (transaction) => {
+            const plan = await transaction.machineProvisioningPlans.findFirst({
+                where: { uuid: input.planUuid, machineUuid: input.machineUuid },
+            });
+            if (!plan) throw new ProvisioningError('PLAN_NOT_FOUND');
+
+            if (
+                plan.status === 'PENDING' &&
+                plan.errorCode === 'WARP_TAKEOVER_PENDING' &&
+                plan.commandUuid
+            ) {
+                const active = await transaction.machineCommands.findFirst({
+                    where: {
+                        uuid: plan.commandUuid,
+                        machineUuid: input.machineUuid,
+                        kind: 'authorize_warp_takeover',
+                        status: { in: ['QUEUED', 'RUNNING'] },
+                        deadlineAt: { gt: input.now },
+                    },
+                    select: { uuid: true },
+                });
+                if (active) return { commandUuid: active.uuid };
+            }
+
+            if (
+                plan.status !== 'BLOCKED' ||
+                plan.expiresAt <= input.now ||
+                !hasWarpTakeoverBlock(plan.result)
+            ) {
+                throw new ProvisioningError('WARP_TAKEOVER_NOT_ALLOWED');
+            }
+            const machine = await transaction.machines.findUnique({
+                where: { uuid: input.machineUuid },
+                select: {
+                    archivedAt: true,
+                    agentLastSeenAt: true,
+                    agentCapabilities: true,
+                    clientCertFingerprint: true,
+                },
+            });
+            if (!machine || machine.archivedAt) throw new ProvisioningError('MACHINE_NOT_FOUND');
+            if (!machine.clientCertFingerprint) {
+                throw new ProvisioningError('MACHINE_NOT_ENROLLED');
+            }
+            if (
+                !machine.agentLastSeenAt ||
+                input.now.getTime() - machine.agentLastSeenAt.getTime() > 2 * 60 * 1_000
+            ) {
+                throw new ProvisioningError('MACHINE_OFFLINE');
+            }
+            if (!machine.agentCapabilities.includes('authorize_warp_takeover')) {
+                throw new ProvisioningError('MACHINE_AGENT_CAPABILITY_MISSING');
+            }
+
+            const commandUuid = randomUUID();
+            const deadlineAt = new Date(input.now.getTime() + 2 * 60 * 1_000);
+            await transaction.machineCommands.create({
+                data: {
+                    uuid: commandUuid,
+                    machineUuid: input.machineUuid,
+                    kind: 'authorize_warp_takeover',
+                    idempotencyKey: `authorize_warp_takeover:${commandUuid}`,
+                    payload: {
+                        planId: input.planUuid,
+                        decision: input.confirmation,
+                        attestNo3xuiUse: true,
+                    },
+                    requestedBy: input.requestedBy,
+                    deadlineAt,
+                },
+            });
+            const claimed = await transaction.machineProvisioningPlans.updateMany({
+                where: {
+                    uuid: input.planUuid,
+                    machineUuid: input.machineUuid,
+                    status: 'BLOCKED',
+                    expiresAt: { gt: input.now },
+                },
+                data: {
+                    status: 'PENDING',
+                    commandUuid,
+                    errorCode: 'WARP_TAKEOVER_PENDING',
+                    errorMessage:
+                        'Explicit WARP takeover is awaiting Agent-side 3X-UI safety inspection',
+                    expiresAt: new Date(input.now.getTime() + 3 * 60 * 1_000),
+                },
+            });
+            if (claimed.count !== 1) throw new ProvisioningError('PLAN_NOT_READY');
+            return { commandUuid };
+        });
+    }
+
     async provision(input: {
         machineUuid: string;
         planUuid: string;
         protocols: ProvisionProtocolInput[];
         enableWarp: boolean;
+        warpMode: 'REUSE_EXTERNAL' | 'INSTALL_OR_REPAIR_MANAGED' | null;
+        dependencyActions: Array<{
+            name: 'docker';
+            action: 'INSTALL_IF_MISSING';
+        }>;
         nodeSecrets: Partial<Record<ProtocolKey, string>>;
         now: Date;
     }): Promise<{ machine: MachineEntity; nodeUuids: string[]; commandUuids: string[] }> {
@@ -256,6 +364,9 @@ export class MachinesRepository {
                 'reconcile_instance',
                 'apply_config',
             ]);
+            if (input.dependencyActions.length > 0) {
+                requiredCapabilities.add('reconcile_dependency');
+            }
             if (input.protocols.some((item) => item.certificate)) {
                 requiredCapabilities.add('reconcile_certificate');
             }
@@ -294,16 +405,19 @@ export class MachinesRepository {
 
             const nodeUuids: string[] = [];
             const commandUuids: string[] = [];
-            if (input.enableWarp) {
+            for (const dependencyAction of input.dependencyActions) {
                 commandUuids.push(
                     await createCommand(
                         transaction,
                         input.machineUuid,
-                        'reconcile_warp',
-                        { enabled: true, proxyPort: 40000 },
+                        'reconcile_dependency',
+                        dependencyAction,
                         input.now,
                     ),
                 );
+            }
+            if (input.enableWarp && !input.warpMode) {
+                throw new ProvisioningError('WARP_PLAN_INVALID');
             }
 
             for (const requested of input.protocols) {
@@ -336,6 +450,7 @@ export class MachinesRepository {
                             }
                           : {}),
                     warpEnabled: input.enableWarp,
+                    ...(input.warpMode ? { warpMode: input.warpMode } : {}),
                     templateVersion: SYSTEM_TEMPLATE_VERSION,
                 };
                 const node = await transaction.nodes.create({
@@ -432,6 +547,17 @@ export class MachinesRepository {
                     );
                 }
             }
+            if (input.enableWarp && input.warpMode) {
+                commandUuids.push(
+                    await createCommand(
+                        transaction,
+                        input.machineUuid,
+                        'reconcile_warp',
+                        { enabled: true, proxyPort: 40000, mode: input.warpMode },
+                        input.now,
+                    ),
+                );
+            }
 
             const updated = await transaction.machines.update({
                 where: { uuid: machine.uuid },
@@ -495,19 +621,20 @@ export class MachinesRepository {
             const warpDesired = machine.nodes.some(
                 (node) => (node.protocolSettings as Record<string, unknown>).warpEnabled === true,
             );
+            let retryWarpMode: 'REUSE_EXTERNAL' | 'INSTALL_OR_REPAIR_MANAGED' | null = null;
             if (warpDesired && machine.warpStatus !== 'CONNECTED') {
                 if (!machine.agentCapabilities.includes('reconcile_warp')) {
                     throw new ProvisioningError('MACHINE_AGENT_CAPABILITY_MISSING');
                 }
-                commandUuids.push(
-                    await createCommand(
-                        transaction,
-                        machine.uuid,
-                        'reconcile_warp',
-                        { enabled: true, proxyPort: 40000 },
-                        input.now,
-                    ),
-                );
+                const warpMode = machine.nodes
+                    .map((node) => (node.protocolSettings as Record<string, unknown>).warpMode)
+                    .find(
+                        (mode) => mode === 'REUSE_EXTERNAL' || mode === 'INSTALL_OR_REPAIR_MANAGED',
+                    );
+                retryWarpMode =
+                    warpMode === 'INSTALL_OR_REPAIR_MANAGED'
+                        ? 'INSTALL_OR_REPAIR_MANAGED'
+                        : 'REUSE_EXTERNAL';
             }
 
             for (const node of machine.nodes) {
@@ -606,6 +733,17 @@ export class MachinesRepository {
                         ...(certificateRequired ? { certificateStatus: 'PENDING' } : {}),
                     },
                 });
+            }
+            if (retryWarpMode) {
+                commandUuids.push(
+                    await createCommand(
+                        transaction,
+                        machine.uuid,
+                        'reconcile_warp',
+                        { enabled: true, proxyPort: 40000, mode: retryWarpMode },
+                        input.now,
+                    ),
+                );
             }
 
             const updated = await transaction.machines.update({
@@ -890,9 +1028,12 @@ export class MachinesRepository {
                 machineUuid,
                 protocolSettings: { path: ['warpEnabled'], equals: true },
             },
-            select: { uuid: true },
+            select: { uuid: true, protocolSettings: true },
         });
         if (!desiredNode) return;
+        const desiredWarpMode = (desiredNode.protocolSettings as Record<string, unknown>).warpMode;
+        const warpMode =
+            desiredWarpMode === 'INSTALL_OR_REPAIR_MANAGED' ? desiredWarpMode : 'REUSE_EXTERNAL';
 
         const machine = await this.prisma.machines.findUnique({
             where: { uuid: machineUuid },
@@ -920,7 +1061,7 @@ export class MachinesRepository {
                 transaction,
                 machineUuid,
                 'reconcile_warp',
-                { enabled: true, proxyPort: 40000 },
+                { enabled: true, proxyPort: 40000, mode: warpMode },
                 now,
             );
             if (machine.warpStatus === 'FAILED') {
@@ -1005,6 +1146,18 @@ export class MachinesRepository {
             const instanceId = typeof payload.instanceId === 'string' ? payload.instanceId : null;
             const planId = typeof payload.planId === 'string' ? payload.planId : null;
             if (command.kind === 'discover_host') {
+                if (!planId) return false;
+                if (
+                    input.status === 'succeeded' &&
+                    (!input.result ||
+                        typeof input.result !== 'object' ||
+                        !('planId' in input.result) ||
+                        input.result.planId !== planId)
+                ) {
+                    return false;
+                }
+            }
+            if (command.kind === 'authorize_warp_takeover') {
                 if (!planId) return false;
                 if (
                     input.status === 'succeeded' &&
@@ -1123,6 +1276,54 @@ export class MachinesRepository {
                         },
                         data: {
                             status: 'FAILED',
+                            errorCode: failureCode,
+                            errorMessage: failureMessage,
+                        },
+                    });
+                    await transaction.machines.update({
+                        where: { uuid: input.machineUuid },
+                        data: { status: 'CONNECTED' },
+                    });
+                }
+                return true;
+            }
+
+            if (command.kind === 'authorize_warp_takeover') {
+                if (!planId) return false;
+                if (input.status === 'succeeded') {
+                    await transaction.machineProvisioningPlans.updateMany({
+                        where: {
+                            uuid: planId,
+                            machineUuid: input.machineUuid,
+                            commandUuid: input.commandUuid,
+                            status: 'PENDING',
+                        },
+                        data: {
+                            status: 'EXPIRED',
+                            errorCode: 'WARP_TAKEOVER_APPROVED_REPLAN_REQUIRED',
+                            errorMessage:
+                                'WARP ownership was adopted. Run a new resource plan before provisioning.',
+                        },
+                    });
+                    await transaction.machines.update({
+                        where: { uuid: input.machineUuid },
+                        data: {
+                            status: 'CONNECTED',
+                            lastErrorCode: null,
+                            lastStatusMessage:
+                                'WARP ownership adopted; resource discovery must be repeated',
+                        },
+                    });
+                } else {
+                    await transaction.machineProvisioningPlans.updateMany({
+                        where: {
+                            uuid: planId,
+                            machineUuid: input.machineUuid,
+                            commandUuid: input.commandUuid,
+                            status: 'PENDING',
+                        },
+                        data: {
+                            status: 'BLOCKED',
                             errorCode: failureCode,
                             errorMessage: failureMessage,
                         },
@@ -1532,6 +1733,31 @@ export class MachinesRepository {
                     },
                 });
             }
+            if (command.kind === 'reconcile_dependency' && input.status !== 'succeeded') {
+                await transaction.machineCommands.updateMany({
+                    where: { machineUuid: input.machineUuid, status: 'QUEUED' },
+                    data: {
+                        status: 'CANCELLED',
+                        errorCode: 'DEPENDENCY_ACTION_FAILED',
+                        completedAt: input.completedAt,
+                    },
+                });
+                await transaction.nodes.updateMany({
+                    where: { machineUuid: input.machineUuid, lifecycleState: 'PROVISIONING' },
+                    data: {
+                        lifecycleState: 'FAILED',
+                        isConnected: false,
+                        isConnecting: false,
+                        lastErrorCode: failureCode,
+                        lastStatusMessage: failureMessage,
+                        lastStatusChange: input.completedAt,
+                    },
+                });
+                await transaction.machines.update({
+                    where: { uuid: input.machineUuid },
+                    data: { status: 'FAILED' },
+                });
+            }
             if (
                 command.kind === 'preflight' &&
                 input.status !== 'succeeded' &&
@@ -1652,6 +1878,23 @@ function hashProvisionRequest(request: ProvisionRequest): string {
     return createHash('sha256').update(JSON.stringify(request), 'utf8').digest('hex');
 }
 
+function hasWarpTakeoverBlock(result: unknown): boolean {
+    if (!result || typeof result !== 'object' || !('dependencies' in result)) return false;
+    const dependencies = result.dependencies;
+    if (!Array.isArray(dependencies)) return false;
+    return dependencies.some(
+        (dependency) =>
+            dependency !== null &&
+            typeof dependency === 'object' &&
+            'name' in dependency &&
+            dependency.name === 'warp' &&
+            'state' in dependency &&
+            dependency.state === 'TAKEOVER_REQUIRED' &&
+            'ownership' in dependency &&
+            dependency.ownership === 'EXTERNAL',
+    );
+}
+
 function portCandidates(preferredPort: number): number[] {
     return [preferredPort, ...DEFAULT_PORT_CANDIDATES].filter(
         (port, index, ports) => ports.indexOf(port) === index,
@@ -1666,6 +1909,7 @@ function discoveryPayload(
     return {
         planId: planUuid,
         mode,
+        warpRequired: request.enableWarp,
         protocols: request.protocols.map((protocol) => {
             const template = PROTOCOL_TEMPLATES[protocol.protocol];
             return {

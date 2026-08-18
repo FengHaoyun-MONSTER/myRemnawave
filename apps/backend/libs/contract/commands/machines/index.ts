@@ -7,5 +7,6 @@ export * from './rotate-enrollment-token.command';
 export * from './provision-machine.command';
 export * from './get-machine-provisioning-plan.command';
 export * from './apply-machine-provisioning-plan.command';
+export * from './authorize-machine-warp-takeover.command';
 export * from './retry-machine.command';
 export * from './publish-machine.command';

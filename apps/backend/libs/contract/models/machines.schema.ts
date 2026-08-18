@@ -90,6 +90,8 @@ export const MachineProvisioningPlanResultSchema = z.object({
                 name: z.string().min(1).max(64),
                 state: z.string().min(1).max(64),
                 action: z.string().min(1).max(64),
+                ownership: z.string().min(1).max(64),
+                required: z.boolean(),
                 message: z.string().max(1024),
             }),
         )

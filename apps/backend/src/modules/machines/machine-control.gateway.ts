@@ -74,6 +74,19 @@ const reconcileInstanceResultSchema = z
     })
     .strict();
 
+const reconcileDependencyResultSchema = z
+    .object({
+        name: z.literal('docker'),
+        status: z.enum([
+            'REUSED_EXTERNAL',
+            'REUSED_MANAGED',
+            'INSTALLED_MANAGED',
+            'REPAIRED_MANAGED',
+        ]),
+        version: z.string().min(1).max(128),
+    })
+    .strict();
+
 const reconcileCertificateResultSchema = z
     .object({
         instanceId: z.uuid(),
@@ -89,6 +102,15 @@ const reconcileWarpResultSchema = z
         proxyPort: z.literal(40000),
         version: z.string().min(1).max(128),
         status: z.literal('CONNECTED'),
+        ownership: z.enum(['MANAGED', 'EXTERNAL']),
+    })
+    .strict();
+
+const authorizeWarpTakeoverResultSchema = z
+    .object({
+        planId: z.uuid(),
+        ownership: z.enum(['ADOPTED', 'MANAGED']),
+        message: z.string().min(1).max(1024),
     })
     .strict();
 
@@ -361,19 +383,24 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
                   ? inventorySchema.parse(result.payload)
                   : commandKind === 'discover_host'
                     ? MachineProvisioningPlanResultSchema.parse(result.payload)
-                    : commandKind === 'preflight'
-                      ? preflightResultSchema.parse(result.payload)
-                      : commandKind === 'reconcile_instance'
-                        ? reconcileInstanceResultSchema.parse(result.payload)
-                        : commandKind === 'reconcile_certificate'
-                          ? reconcileCertificateResultSchema.parse(result.payload)
-                          : commandKind === 'reconcile_warp'
-                            ? reconcileWarpResultSchema.parse(result.payload)
-                            : commandKind === 'apply_config'
-                              ? applyConfigResultSchema.parse(result.payload)
-                              : commandKind === 'start_instance' || commandKind === 'stop_instance'
-                                ? lifecycleResultSchema.parse(result.payload)
-                                : result.payload;
+                    : commandKind === 'reconcile_dependency'
+                      ? reconcileDependencyResultSchema.parse(result.payload)
+                      : commandKind === 'preflight'
+                        ? preflightResultSchema.parse(result.payload)
+                        : commandKind === 'reconcile_instance'
+                          ? reconcileInstanceResultSchema.parse(result.payload)
+                          : commandKind === 'reconcile_certificate'
+                            ? reconcileCertificateResultSchema.parse(result.payload)
+                            : commandKind === 'reconcile_warp'
+                              ? reconcileWarpResultSchema.parse(result.payload)
+                              : commandKind === 'authorize_warp_takeover'
+                                ? authorizeWarpTakeoverResultSchema.parse(result.payload)
+                                : commandKind === 'apply_config'
+                                  ? applyConfigResultSchema.parse(result.payload)
+                                  : commandKind === 'start_instance' ||
+                                      commandKind === 'stop_instance'
+                                    ? lifecycleResultSchema.parse(result.payload)
+                                    : result.payload;
         const preflightFailed =
             commandKind === 'preflight' &&
             result.status === 'succeeded' &&

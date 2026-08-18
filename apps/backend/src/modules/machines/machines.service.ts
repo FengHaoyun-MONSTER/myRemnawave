@@ -20,6 +20,7 @@ import { NodesQueuesService } from '@queue/_nodes';
 
 import {
     CreateMachineBodyDto,
+    AuthorizeMachineWarpTakeoverBodyDto,
     EnrollMachineBodyDto,
     ProvisionMachineBodyDto,
     PublishMachineBodyDto,
@@ -248,6 +249,10 @@ export class MachinesService {
                         );
                     case 'NODE_CREDENTIALS_MISSING':
                         throw new ServiceUnavailableException('Node credentials are unavailable');
+                    case 'WARP_PLAN_INVALID':
+                        throw new ConflictException(
+                            'WARP ownership or compatibility blocks this plan',
+                        );
                 }
             }
             if (isUniqueConstraintViolation(error)) {
@@ -305,6 +310,26 @@ export class MachinesService {
             if (protocols.length === 0) {
                 throw new ConflictException('Machine provisioning plan has no ready protocols');
             }
+            const dockerDependency = discovery.dependencies.find(
+                (dependency) => dependency.name === 'docker',
+            );
+            const dependencyActions =
+                dockerDependency && ['INSTALL', 'REPAIR'].includes(dockerDependency.action)
+                    ? [{ name: 'docker' as const, action: 'INSTALL_IF_MISSING' as const }]
+                    : [];
+            const warpDependency = discovery.dependencies.find(
+                (dependency) => dependency.name === 'warp',
+            );
+            const warpMode = request.enableWarp
+                ? warpDependency?.action === 'REUSE_EXTERNAL'
+                    ? ('REUSE_EXTERNAL' as const)
+                    : ['INSTALL_MANAGED', 'REPAIR_MANAGED'].includes(warpDependency?.action ?? '')
+                      ? ('INSTALL_OR_REPAIR_MANAGED' as const)
+                      : null
+                : null;
+            if (request.enableWarp && !warpMode) {
+                throw new ConflictException('WARP ownership or compatibility blocks this plan');
+            }
             const generatedCredentials = await Promise.all(
                 protocols.map(async (protocol) => ({
                     protocol: protocol.protocol,
@@ -325,6 +350,8 @@ export class MachinesService {
                 planUuid,
                 protocols,
                 enableWarp: request.enableWarp,
+                warpMode,
+                dependencyActions,
                 nodeSecrets,
                 now: new Date(),
             });
@@ -363,10 +390,57 @@ export class MachinesService {
                         );
                     case 'NODE_CREDENTIALS_MISSING':
                         throw new ServiceUnavailableException('Node credentials are unavailable');
+                    case 'WARP_PLAN_INVALID':
+                        throw new ConflictException(
+                            'WARP ownership or compatibility blocks this plan',
+                        );
                 }
             }
             if (isUniqueConstraintViolation(error)) {
                 throw new ConflictException('Provisioning conflicts with an existing node or host');
+            }
+            throw error;
+        }
+    }
+
+    async authorizeWarpTakeover(
+        uuid: string,
+        planUuid: string,
+        dto: AuthorizeMachineWarpTakeoverBodyDto,
+        requestedBy: string | null,
+    ) {
+        if (!requestedBy) throw new UnauthorizedException('Authenticated administrator required');
+        try {
+            const result = await this.machinesRepository.authorizeWarpTakeover({
+                machineUuid: uuid,
+                planUuid,
+                confirmation: dto.confirmation,
+                requestedBy,
+                now: new Date(),
+            });
+            await this.machineControlGateway.dispatchReady(uuid);
+            return result;
+        } catch (error) {
+            if (error instanceof ProvisioningError) {
+                switch (error.reason) {
+                    case 'PLAN_NOT_FOUND':
+                        throw new NotFoundException('Machine provisioning plan not found');
+                    case 'WARP_TAKEOVER_NOT_ALLOWED':
+                    case 'PLAN_NOT_READY':
+                        throw new ConflictException(
+                            'This plan is not eligible for external WARP takeover',
+                        );
+                    case 'MACHINE_NOT_FOUND':
+                        throw new NotFoundException('Machine not found');
+                    case 'MACHINE_NOT_ENROLLED':
+                        throw new ConflictException('Machine Agent has not enrolled yet');
+                    case 'MACHINE_OFFLINE':
+                        throw new ConflictException('Machine Agent is offline');
+                    case 'MACHINE_AGENT_CAPABILITY_MISSING':
+                        throw new ConflictException(
+                            'Machine Agent must be upgraded before WARP takeover',
+                        );
+                }
             }
             throw error;
         }

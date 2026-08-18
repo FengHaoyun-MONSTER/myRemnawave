@@ -63,7 +63,7 @@ requirements, pre-downloaded assets, layout, and recovery details.
 - Debian 12/13, Ubuntu 22.04 LTS, and Ubuntu 24.04 LTS test coverage.
 
 The approved product baseline is
-[docs/requirements/requirements-baseline-v1.0.md](docs/requirements/requirements-baseline-v1.0.md).
+[docs/requirements/requirements-baseline-v1.1.md](docs/requirements/requirements-baseline-v1.1.md).
 
 ## Repository status
 

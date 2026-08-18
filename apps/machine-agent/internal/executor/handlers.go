@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/certificate"
+	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/dependency"
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/discovery"
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/instance"
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/inventory"
@@ -115,14 +116,19 @@ func diskCheck(system inventory.System) Check {
 func DefaultHandlers(managedRoot, machineID string) map[string]Handler {
 	return map[string]Handler{
 		protocol.CommandInventory:            InventoryHandler{ManagedRoot: managedRoot},
-		protocol.CommandDiscoverHost:         discovery.Handler{ManagedRoot: managedRoot},
+		protocol.CommandDiscoverHost:         discovery.Handler{ManagedRoot: managedRoot, MachineID: machineID},
+		protocol.CommandReconcileDependency:  dependency.Handler{ManagedRoot: managedRoot, MachineID: machineID},
 		protocol.CommandPreflight:            PreflightHandler{ManagedRoot: managedRoot},
 		protocol.CommandReconcileInstance:    instance.Handler{ManagedRoot: managedRoot, MachineID: machineID},
 		protocol.CommandReconcileCertificate: certificate.Handler{ManagedRoot: managedRoot},
-		protocol.CommandReconcileWARP:        warp.NewHandler(managedRoot),
-		protocol.CommandApplyConfig:          nodeconfig.Handler{ManagedRoot: managedRoot},
-		protocol.CommandStartInstance:        instance.LifecycleHandler{Start: true, MachineID: machineID},
-		protocol.CommandStopInstance:         instance.LifecycleHandler{Start: false, MachineID: machineID},
+		protocol.CommandReconcileWARP:        warp.NewHandler(managedRoot, machineID),
+		protocol.CommandAuthorizeWARPTakeover: warp.TakeoverHandler{
+			ManagedRoot: managedRoot,
+			MachineID:   machineID,
+		},
+		protocol.CommandApplyConfig:   nodeconfig.Handler{ManagedRoot: managedRoot},
+		protocol.CommandStartInstance: instance.LifecycleHandler{Start: true, MachineID: machineID},
+		protocol.CommandStopInstance:  instance.LifecycleHandler{Start: false, MachineID: machineID},
 	}
 }
 

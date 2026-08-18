@@ -30,6 +30,7 @@ import {
     machinesQueryKeys,
     nodesQueryKeys,
     useApplyMachineProvisioningPlan,
+    useAuthorizeMachineWarpTakeover,
     useCreateMachine,
     useGetInternalSquads,
     useGetMachineControlStatus,
@@ -114,6 +115,14 @@ export function MachinesPage() {
     })
 
     const currentMachine = machines?.find((machine) => machine.uuid === wizardMachine?.machine.uuid)
+    const warpTakeoverRequired =
+        provisioningPlan?.status === 'BLOCKED' &&
+        provisioningPlan.result?.dependencies.some(
+            (dependency) =>
+                dependency.name === 'warp' &&
+                dependency.state === 'TAKEOVER_REQUIRED' &&
+                dependency.ownership === 'EXTERNAL'
+        )
     const machineNodes = (nodes ?? []).filter(
         (node) => node.machineUuid === wizardMachine?.machine.uuid
     )
@@ -224,6 +233,20 @@ export function MachinesPage() {
             }
         }
     })
+    const { mutate: authorizeWarpTakeover, isPending: isAuthorizingWarpTakeover } =
+        useAuthorizeMachineWarpTakeover({
+            mutationFns: {
+                onSuccess: () => {
+                    if (!wizardMachine || !provisioningPlanUuid) return
+                    queryClient.invalidateQueries({
+                        queryKey: machinesQueryKeys.getProvisioningPlan({
+                            uuid: wizardMachine.machine.uuid,
+                            planUuid: provisioningPlanUuid
+                        }).queryKey
+                    })
+                }
+            }
+        })
     const { mutate: retryMachine, isPending: isRetrying } = useRetryMachine({
         mutationFns: {
             onSuccess: (result) => {
@@ -500,7 +523,7 @@ export function MachinesPage() {
                             >
                                 {agentConnected
                                     ? 'Machine Agent is connected with mutual TLS.'
-                                    : 'Run this one-time command as root. It installs Docker and the pinned Agent, then enrolls without uploading SSH credentials or private keys.'}
+                                    : 'Run this one-time command as root. It installs only the pinned Agent and enrolls without uploading SSH credentials or private keys. Docker and WARP are handled later from an approved resource plan.'}
                             </Alert>
                             {enrollmentCommand ? (
                                 <>
@@ -779,7 +802,7 @@ export function MachinesPage() {
                             </ProtocolToggle>
                             <Switch
                                 checked={enableWarp}
-                                label="Install and enable shared WARP proxy"
+                                label="Use host WARP (install managed WARP or safely reuse a compatible external proxy)"
                                 onChange={(event) => setEnableWarp(event.currentTarget.checked)}
                             />
                             <MultiSelect
@@ -805,6 +828,33 @@ export function MachinesPage() {
                                     title={`Resource plan: ${provisioningPlan.status}`}
                                 >
                                     <Stack gap="xs">
+                                        {provisioningPlan.result?.dependencies
+                                            .filter((dependency) => dependency.required)
+                                            .map((dependency) => (
+                                                <Group
+                                                    justify="space-between"
+                                                    key={dependency.name}
+                                                >
+                                                    <Text size="sm">
+                                                        {dependency.name.toUpperCase()} ·{' '}
+                                                        {dependency.ownership}
+                                                    </Text>
+                                                    <Badge
+                                                        color={
+                                                            dependency.action === 'NONE' &&
+                                                            dependency.state !== 'READY_EXTERNAL' &&
+                                                            dependency.state !== 'READY_MANAGED'
+                                                                ? 'red'
+                                                                : dependency.action ===
+                                                                    'TAKEOVER_REQUIRED'
+                                                                  ? 'red'
+                                                                  : 'blue'
+                                                        }
+                                                    >
+                                                        {dependency.state} / {dependency.action}
+                                                    </Badge>
+                                                </Group>
+                                            ))}
                                         {provisioningPlan.result?.protocols.map((protocol) => (
                                             <Group justify="space-between" key={protocol.protocol}>
                                                 <Text size="sm">{protocol.protocol}</Text>
@@ -826,6 +876,32 @@ export function MachinesPage() {
                                                 {provisioningPlan.errorMessage ??
                                                     'Resource planning failed'}
                                             </Text>
+                                        )}
+                                        {warpTakeoverRequired && wizardMachine && (
+                                            <Button
+                                                color="red"
+                                                loading={isAuthorizingWarpTakeover}
+                                                onClick={() => {
+                                                    const confirmed = window.confirm(
+                                                        'This adopts the existing host WARP for myRemnawave management. Continue only if it is not used by 3X-UI. The Agent will refuse when it detects any 3X-UI indicator, and a new resource plan will be required.'
+                                                    )
+                                                    if (!confirmed) return
+                                                    authorizeWarpTakeover({
+                                                        route: {
+                                                            uuid: wizardMachine.machine.uuid,
+                                                            planUuid: provisioningPlan.uuid
+                                                        },
+                                                        variables: {
+                                                            confirmation: 'TAKE_OVER_EXTERNAL_WARP',
+                                                            attestNo3xuiUse: true
+                                                        }
+                                                    })
+                                                }}
+                                                size="xs"
+                                                variant="light"
+                                            >
+                                                Authorize external WARP takeover
+                                            </Button>
                                         )}
                                     </Stack>
                                 </Alert>

@@ -1,6 +1,7 @@
 import { notifications } from '@mantine/notifications'
 import {
     ApplyMachineProvisioningPlanCommand,
+    AuthorizeMachineWarpTakeoverCommand,
     CreateMachineCommand,
     ProvisionMachineCommand,
     PublishMachineCommand,
@@ -49,6 +50,15 @@ export const useApplyMachineProvisioningPlan = createMutationHook({
     responseSchema: ApplyMachineProvisioningPlanCommand.ResponseSchema,
     requestMethod: ApplyMachineProvisioningPlanCommand.endpointDetails.REQUEST_METHOD,
     rMutationParams: { onError: failure('Apply Machine Provisioning Plan') }
+})
+
+export const useAuthorizeMachineWarpTakeover = createMutationHook({
+    endpoint: AuthorizeMachineWarpTakeoverCommand.TSQ_url,
+    routeParamsSchema: AuthorizeMachineWarpTakeoverCommand.RequestParamsSchema,
+    bodySchema: AuthorizeMachineWarpTakeoverCommand.RequestBodySchema,
+    responseSchema: AuthorizeMachineWarpTakeoverCommand.ResponseSchema,
+    requestMethod: AuthorizeMachineWarpTakeoverCommand.endpointDetails.REQUEST_METHOD,
+    rMutationParams: { onError: failure('Authorize WARP Takeover') }
 })
 
 export const usePublishMachine = createMutationHook({

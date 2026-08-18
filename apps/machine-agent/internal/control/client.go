@@ -32,10 +32,12 @@ const (
 var capabilities = []string{
 	protocol.CommandInventory,
 	protocol.CommandDiscoverHost,
+	protocol.CommandReconcileDependency,
 	protocol.CommandPreflight,
 	protocol.CommandReconcileInstance,
 	protocol.CommandReconcileCertificate,
 	protocol.CommandReconcileWARP,
+	protocol.CommandAuthorizeWARPTakeover,
 	protocol.CommandApplyConfig,
 	protocol.CommandStartInstance,
 	protocol.CommandStopInstance,

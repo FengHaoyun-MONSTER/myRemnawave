@@ -28,6 +28,8 @@
 1. Align runtime OS support with installer support for Debian 12/13 and Ubuntu
    22.04/24.04.
 2. Make Debian 13 package handling install/verify the Docker CLI explicitly.
+   Batch C then moves this behavior out of enrollment and into the approved
+   typed dependency action.
 3. Persist bounded, redacted Agent failure messages and expose them in Machine
    and node status.
 4. Prevent generic node health checks from queuing lifecycle work for

@@ -226,13 +226,30 @@ describe('MachinesService resource planning', () => {
                             },
                         },
                     ],
-                    enableWarp: false,
+                    enableWarp: true,
                 },
                 result: {
                     planId: planUuid,
                     system: {},
                     machineChecks: [],
-                    dependencies: [],
+                    dependencies: [
+                        {
+                            name: 'docker',
+                            state: 'MISSING',
+                            action: 'INSTALL',
+                            ownership: 'ABSENT',
+                            required: true,
+                            message: 'install Docker',
+                        },
+                        {
+                            name: 'warp',
+                            state: 'READY_EXTERNAL',
+                            action: 'REUSE_EXTERNAL',
+                            ownership: 'EXTERNAL',
+                            required: true,
+                            message: 'reuse WARP',
+                        },
+                    ],
                     protocols: [
                         {
                             protocol: 'VLESS_REALITY',
@@ -277,6 +294,8 @@ describe('MachinesService resource planning', () => {
         expect(repository.provision).toHaveBeenCalledWith(
             expect.objectContaining({
                 planUuid,
+                dependencyActions: [{ name: 'docker', action: 'INSTALL_IF_MISSING' }],
+                warpMode: 'REUSE_EXTERNAL',
                 protocols: [
                     expect.objectContaining({
                         protocol: 'HYSTERIA2',
@@ -287,12 +306,40 @@ describe('MachinesService resource planning', () => {
             }),
         );
     });
+
+    it('records an explicit admin WARP takeover decision against the blocked plan', async () => {
+        const { service, repository, gateway } = createService(true);
+        repository.authorizeWarpTakeover.mockResolvedValue({
+            commandUuid: '123e4567-e89b-42d3-a456-426614174009',
+        });
+
+        await expect(
+            service.authorizeWarpTakeover(
+                '10e2c8e1-515c-4a9c-99eb-dbb8cc2aabdc',
+                '123e4567-e89b-42d3-a456-426614174005',
+                {
+                    confirmation: 'TAKE_OVER_EXTERNAL_WARP',
+                    attestNo3xuiUse: true,
+                },
+                '123e4567-e89b-42d3-a456-426614174010',
+            ),
+        ).resolves.toEqual({ commandUuid: '123e4567-e89b-42d3-a456-426614174009' });
+        expect(repository.authorizeWarpTakeover).toHaveBeenCalledWith(
+            expect.objectContaining({
+                machineUuid: '10e2c8e1-515c-4a9c-99eb-dbb8cc2aabdc',
+                planUuid: '123e4567-e89b-42d3-a456-426614174005',
+                requestedBy: '123e4567-e89b-42d3-a456-426614174010',
+            }),
+        );
+        expect(gateway.dispatchReady).toHaveBeenCalledWith('10e2c8e1-515c-4a9c-99eb-dbb8cc2aabdc');
+    });
 });
 
 function createService(controlReady: boolean) {
     const repository = {
         create: vi.fn(),
         createProvisioningPlan: vi.fn(),
+        authorizeWarpTakeover: vi.fn(),
         getProvisioningPlan: vi.fn(),
         provision: vi.fn(),
         findByEnrollmentCredentialHash: vi.fn(),

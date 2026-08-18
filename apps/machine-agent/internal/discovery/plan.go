@@ -26,9 +26,10 @@ type ProtocolRequest struct {
 }
 
 type Request struct {
-	PlanID    string            `json:"planId"`
-	Mode      string            `json:"mode"`
-	Protocols []ProtocolRequest `json:"protocols"`
+	PlanID       string            `json:"planId"`
+	Mode         string            `json:"mode"`
+	WarpRequired bool              `json:"warpRequired"`
+	Protocols    []ProtocolRequest `json:"protocols"`
 }
 
 type Check struct {

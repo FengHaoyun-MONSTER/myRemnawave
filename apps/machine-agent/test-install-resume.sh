@@ -73,13 +73,13 @@ export TEST_ASSETS="$assets"
 
 run_installer() {
     PATH="$mock_bin:$PATH" sh "$installer" \
-        --version v0.1.2 \
+        --version v0.2.0 \
         --panel-url https://panel.example.com/api/machine-enrollment \
-        --token mrw_enroll_1234567890123456789012345678901234567890
+        --token mrw_enroll_test
 }
 
 run_installer
-grep -Fqx 'v0.1.2' /usr/local/lib/myremnawave-agent/.version
+grep -Fqx 'v0.2.0' /usr/local/lib/myremnawave-agent/.version
 [ "$(wc -l </tmp/myremnawave-test-enroll-count)" -eq 1 ]
 for credential in client.crt client.key ca.crt agent.env; do
     [ -f "/etc/myremnawave-agent/$credential" ]
