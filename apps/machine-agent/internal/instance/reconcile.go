@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,21 +29,47 @@ var (
 )
 
 type Request struct {
-	InstanceID   string `json:"instanceId"`
-	Protocol     string `json:"protocol"`
-	Image        string `json:"image"`
-	ControlPort  uint16 `json:"controlPort"`
-	ExternalPort uint16 `json:"externalPort"`
-	Network      string `json:"network"`
-	SecretKey    string `json:"secretKey"`
+	InstanceID    string   `json:"instanceId"`
+	Protocol      string   `json:"protocol"`
+	Image         string   `json:"image"`
+	ControlPort   uint16   `json:"controlPort"`
+	ExternalPort  uint16   `json:"externalPort"`
+	FallbackPorts []uint16 `json:"fallbackPorts,omitempty"`
+	Network       string   `json:"network"`
+	SecretKey     string   `json:"secretKey"`
 }
 
 type Result struct {
 	InstanceID       string `json:"instanceId"`
 	ContainerName    string `json:"containerName"`
 	ConfigHash       string `json:"configHash"`
+	ExternalPort     uint16 `json:"externalPort"`
 	RealityPublicKey string `json:"realityPublicKey,omitempty"`
 	RealityShortID   string `json:"realityShortId,omitempty"`
+}
+
+type PortProbe interface {
+	Available(ctx context.Context, network string, port uint16) (bool, string)
+}
+
+type NetPortProbe struct{}
+
+func (NetPortProbe) Available(_ context.Context, network string, port uint16) (bool, string) {
+	address := fmt.Sprintf("0.0.0.0:%d", port)
+	if network == "tcp" {
+		listener, err := net.Listen("tcp4", address)
+		if err != nil {
+			return false, "TCP port is occupied or unavailable"
+		}
+		_ = listener.Close()
+		return true, "TCP port is available"
+	}
+	connection, err := net.ListenPacket("udp4", address)
+	if err != nil {
+		return false, "UDP port is occupied or unavailable"
+	}
+	_ = connection.Close()
+	return true, "UDP port is available"
 }
 
 type Runner interface {
@@ -59,6 +86,7 @@ type Handler struct {
 	ManagedRoot string
 	MachineID   string
 	Runner      Runner
+	Probe       PortProbe
 }
 
 func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, error) {
@@ -71,6 +99,22 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 	}
 	if !uuidPattern.MatchString(h.MachineID) {
 		return nil, errors.New("Machine ownership identity is invalid")
+	}
+	containerName := "myremnawave-" + strings.ReplaceAll(request.InstanceID, "-", "")[:16]
+	runner := h.Runner
+	if runner == nil {
+		runner = DockerRunner{}
+	}
+	containerExists, currentHash, err := inspectContainer(ctx, runner, containerName, h.MachineID, request.InstanceID)
+	if err != nil {
+		return nil, err
+	}
+	if !containerExists {
+		selectedPort, selectErr := selectExternalPort(ctx, h.portProbe(), request)
+		if selectErr != nil {
+			return nil, selectErr
+		}
+		request.ExternalPort = selectedPort
 	}
 	root, err := secureRoot(h.ManagedRoot)
 	if err != nil {
@@ -93,15 +137,6 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 		return nil, err
 	}
 	hash := desiredHash(request)
-	containerName := "myremnawave-" + strings.ReplaceAll(request.InstanceID, "-", "")[:16]
-	runner := h.Runner
-	if runner == nil {
-		runner = DockerRunner{}
-	}
-	containerExists, currentHash, err := inspectContainer(ctx, runner, containerName, h.MachineID, request.InstanceID)
-	if err != nil {
-		return nil, err
-	}
 	if err := ensureManagedNetwork(ctx, runner, h.MachineID); err != nil {
 		return nil, err
 	}
@@ -113,7 +148,7 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 		if output, err := runner.Run(ctx, "start", containerName); err != nil && !strings.Contains(string(output), "already running") {
 			return nil, commandError("CONTAINER_START_FAILED", output, err)
 		}
-		return Result{InstanceID: request.InstanceID, ContainerName: containerName, ConfigHash: hash, RealityPublicKey: publicKey, RealityShortID: shortID}, nil
+		return Result{InstanceID: request.InstanceID, ContainerName: containerName, ConfigHash: hash, ExternalPort: request.ExternalPort, RealityPublicKey: publicKey, RealityShortID: shortID}, nil
 	}
 	if containerExists {
 		_, _ = runner.Run(ctx, "stop", "--time", "30", containerName)
@@ -140,7 +175,25 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 	if output, err := runner.Run(ctx, arguments...); err != nil {
 		return nil, commandError("CONTAINER_RUN_FAILED", output, err)
 	}
-	return Result{InstanceID: request.InstanceID, ContainerName: containerName, ConfigHash: hash, RealityPublicKey: publicKey, RealityShortID: shortID}, nil
+	return Result{InstanceID: request.InstanceID, ContainerName: containerName, ConfigHash: hash, ExternalPort: request.ExternalPort, RealityPublicKey: publicKey, RealityShortID: shortID}, nil
+}
+
+func (h Handler) portProbe() PortProbe {
+	if h.Probe != nil {
+		return h.Probe
+	}
+	return NetPortProbe{}
+}
+
+func selectExternalPort(ctx context.Context, probe PortProbe, request Request) (uint16, error) {
+	ports := append([]uint16{request.ExternalPort}, request.FallbackPorts...)
+	for _, port := range ports {
+		available, _ := probe.Available(ctx, request.Network, port)
+		if available {
+			return port, nil
+		}
+	}
+	return 0, errors.New("PORT_POOL_EXHAUSTED: no requested external port is available")
 }
 
 func decode(payload json.RawMessage) (Request, error) {
@@ -171,6 +224,19 @@ func validate(request Request) error {
 	}
 	if request.ExternalPort == 0 {
 		return errors.New("externalPort is required")
+	}
+	if len(request.FallbackPorts) > 15 {
+		return errors.New("at most fifteen fallback ports are allowed")
+	}
+	seenPorts := map[uint16]struct{}{request.ExternalPort: {}}
+	for _, port := range request.FallbackPorts {
+		if port == 0 {
+			return errors.New("fallback ports must be between 1 and 65535")
+		}
+		if _, duplicate := seenPorts[port]; duplicate {
+			return errors.New("fallback ports must be unique")
+		}
+		seenPorts[port] = struct{}{}
 	}
 	if !imagePattern.MatchString(request.Image) {
 		return errors.New("image must be a digest-pinned remnawave/node image")

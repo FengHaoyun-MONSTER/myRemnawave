@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { MACHINES_ROUTES, REST_API } from '../../api';
 import { getEndpointDetails } from '../../constants';
-import { MachineSchema } from '../../models';
+import { MachineProvisioningPlanSchema, MachineSchema } from '../../models';
 
 const DomainSchema = z
     .string()
@@ -69,7 +69,7 @@ export namespace ProvisionMachineCommand {
     export const endpointDetails = getEndpointDetails(
         MACHINES_ROUTES.ACTIONS.PROVISION(':uuid'),
         'post',
-        'Provision protocol instances on a machine',
+        'Discover resources and plan protocol instances on a machine',
         { scope: 'provision', kind: 'write' },
     );
 
@@ -116,8 +116,8 @@ export namespace ProvisionMachineCommand {
     export const ResponseSchema = z.object({
         response: z.object({
             machine: MachineSchema,
-            nodeUuids: z.array(z.uuid()),
-            commandUuids: z.array(z.uuid()),
+            plan: MachineProvisioningPlanSchema,
+            commandUuid: z.uuid(),
         }),
     });
 

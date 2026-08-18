@@ -31,6 +31,7 @@ const (
 
 var capabilities = []string{
 	protocol.CommandInventory,
+	protocol.CommandDiscoverHost,
 	protocol.CommandPreflight,
 	protocol.CommandReconcileInstance,
 	protocol.CommandReconcileCertificate,

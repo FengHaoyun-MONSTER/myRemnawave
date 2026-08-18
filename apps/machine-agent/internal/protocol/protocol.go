@@ -23,6 +23,7 @@ const (
 
 const (
 	CommandInventory            = "inventory"
+	CommandDiscoverHost         = "discover_host"
 	CommandPreflight            = "preflight"
 	CommandReconcileInstance    = "reconcile_instance"
 	CommandReconcileCertificate = "reconcile_certificate"
@@ -176,6 +177,7 @@ func (c Command) Validate(now time.Time) error {
 func IsKnownCommand(kind string) bool {
 	switch kind {
 	case CommandInventory,
+		CommandDiscoverHost,
 		CommandPreflight,
 		CommandReconcileInstance,
 		CommandReconcileCertificate,

@@ -17,9 +17,11 @@ import { RolesGuard } from '@common/guards/roles/roles.guard';
 import { ScopesGuard } from '@common/guards/scopes';
 import {
     CreateMachineCommand,
+    ApplyMachineProvisioningPlanCommand,
     EnrollMachineCommand,
     GetMachineCommand,
     GetMachineControlStatusCommand,
+    GetMachineProvisioningPlanCommand,
     GetMachinesCommand,
     ProvisionMachineCommand,
     PublishMachineCommand,
@@ -29,11 +31,16 @@ import {
 
 import {
     CreateMachineBodyDto,
+    ApplyMachineProvisioningPlanBodyDto,
+    ApplyMachineProvisioningPlanParamDto,
+    ApplyMachineProvisioningPlanResponseDto,
     CreateMachineResponseDto,
     EnrollMachineBodyDto,
     EnrollMachineResponseDto,
     GetMachineParamDto,
     GetMachineControlStatusResponseDto,
+    GetMachineProvisioningPlanParamDto,
+    GetMachineProvisioningPlanResponseDto,
     GetMachineResponseDto,
     GetMachinesResponseDto,
     ProvisionMachineBodyDto,
@@ -97,6 +104,17 @@ export class MachinesController {
     }
 
     @Endpoint({
+        type: GetMachineProvisioningPlanResponseDto,
+        command: GetMachineProvisioningPlanCommand,
+        httpCode: HttpStatus.OK,
+    })
+    async getMachineProvisioningPlan(@Param() params: GetMachineProvisioningPlanParamDto) {
+        return {
+            response: await this.machinesService.getProvisioningPlan(params.uuid, params.planUuid),
+        };
+    }
+
+    @Endpoint({
         type: RotateMachineEnrollmentTokenResponseDto,
         command: RotateMachineEnrollmentTokenCommand,
         httpCode: HttpStatus.OK,
@@ -117,6 +135,23 @@ export class MachinesController {
         @Body() body: ProvisionMachineBodyDto,
     ) {
         return { response: await this.machinesService.provision(params.uuid, body) };
+    }
+
+    @Endpoint({
+        type: ApplyMachineProvisioningPlanResponseDto,
+        command: ApplyMachineProvisioningPlanCommand,
+        httpCode: HttpStatus.CREATED,
+    })
+    async applyMachineProvisioningPlan(
+        @Param() params: ApplyMachineProvisioningPlanParamDto,
+        @Body() _body: ApplyMachineProvisioningPlanBodyDto,
+    ) {
+        return {
+            response: await this.machinesService.applyProvisioningPlan(
+                params.uuid,
+                params.planUuid,
+            ),
+        };
     }
 
     @Endpoint({

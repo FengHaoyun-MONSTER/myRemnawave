@@ -1,7 +1,9 @@
 import {
     CreateMachineCommand,
+    ApplyMachineProvisioningPlanCommand,
     EnrollMachineCommand,
     GetMachineControlStatusCommand,
+    GetMachineProvisioningPlanCommand,
     GetMachineCommand,
     GetMachinesCommand,
     ProvisionMachineCommand,
@@ -35,6 +37,21 @@ export class ProvisionMachineBodyDto extends createZodDto(
 ) {}
 export class ProvisionMachineResponseDto extends createZodDto(
     ProvisionMachineCommand.ResponseSchema,
+) {}
+export class GetMachineProvisioningPlanParamDto extends createZodDto(
+    GetMachineProvisioningPlanCommand.RequestParamsSchema,
+) {}
+export class GetMachineProvisioningPlanResponseDto extends createZodDto(
+    GetMachineProvisioningPlanCommand.ResponseSchema,
+) {}
+export class ApplyMachineProvisioningPlanParamDto extends createZodDto(
+    ApplyMachineProvisioningPlanCommand.RequestParamsSchema,
+) {}
+export class ApplyMachineProvisioningPlanBodyDto extends createZodDto(
+    ApplyMachineProvisioningPlanCommand.RequestBodySchema,
+) {}
+export class ApplyMachineProvisioningPlanResponseDto extends createZodDto(
+    ApplyMachineProvisioningPlanCommand.ResponseSchema,
 ) {}
 export class PublishMachineParamDto extends createZodDto(
     PublishMachineCommand.RequestParamSchema,

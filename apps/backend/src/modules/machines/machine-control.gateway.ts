@@ -11,6 +11,9 @@ import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } fro
 
 import { TypedConfigService } from '@common/config/app-config';
 import { generateMachineControlServerCertificate } from '@common/utils/certs/generate-machine-control-server-cert.util';
+import { MachineProvisioningPlanResultSchema } from '@libs/contracts/models';
+
+import { NodesQueuesService } from '@queue/_nodes';
 
 import {
     agentEnvelopeSchema,
@@ -62,6 +65,7 @@ const reconcileInstanceResultSchema = z
         instanceId: z.uuid(),
         containerName: z.string().regex(/^myremnawave-[0-9a-f]{16}$/),
         configHash: z.string().regex(/^[0-9a-f]{64}$/),
+        externalPort: z.int().min(1).max(65535),
         realityPublicKey: z.string().max(128).optional(),
         realityShortId: z
             .string()
@@ -119,6 +123,7 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
     constructor(
         private readonly config: TypedConfigService,
         private readonly machinesRepository: MachinesRepository,
+        private readonly nodesQueuesService: NodesQueuesService,
     ) {}
 
     async onApplicationBootstrap(): Promise<void> {
@@ -354,23 +359,32 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
                 ? result.payload
                 : commandKind === 'inventory'
                   ? inventorySchema.parse(result.payload)
-                  : commandKind === 'preflight'
-                    ? preflightResultSchema.parse(result.payload)
-                    : commandKind === 'reconcile_instance'
-                      ? reconcileInstanceResultSchema.parse(result.payload)
-                      : commandKind === 'reconcile_certificate'
-                        ? reconcileCertificateResultSchema.parse(result.payload)
-                        : commandKind === 'reconcile_warp'
-                          ? reconcileWarpResultSchema.parse(result.payload)
-                          : commandKind === 'apply_config'
-                            ? applyConfigResultSchema.parse(result.payload)
-                            : commandKind === 'start_instance' || commandKind === 'stop_instance'
-                              ? lifecycleResultSchema.parse(result.payload)
-                              : result.payload;
+                  : commandKind === 'discover_host'
+                    ? MachineProvisioningPlanResultSchema.parse(result.payload)
+                    : commandKind === 'preflight'
+                      ? preflightResultSchema.parse(result.payload)
+                      : commandKind === 'reconcile_instance'
+                        ? reconcileInstanceResultSchema.parse(result.payload)
+                        : commandKind === 'reconcile_certificate'
+                          ? reconcileCertificateResultSchema.parse(result.payload)
+                          : commandKind === 'reconcile_warp'
+                            ? reconcileWarpResultSchema.parse(result.payload)
+                            : commandKind === 'apply_config'
+                              ? applyConfigResultSchema.parse(result.payload)
+                              : commandKind === 'start_instance' || commandKind === 'stop_instance'
+                                ? lifecycleResultSchema.parse(result.payload)
+                                : result.payload;
         const preflightFailed =
             commandKind === 'preflight' &&
             result.status === 'succeeded' &&
             preflightResultSchema.parse(validatedResult).ok === false;
+        const preflightFailureCode = preflightFailed
+            ? preflightResultSchema
+                  .parse(validatedResult)
+                  .checks.some((check) => !check.ok && !check.name.startsWith('port_'))
+                ? 'PREFLIGHT_MACHINE_FAILED'
+                : 'PREFLIGHT_PROTOCOL_FAILED'
+            : undefined;
         const errorMessage = preflightFailed
             ? summarizePreflightFailure(preflightResultSchema.parse(validatedResult))
             : result.status === 'succeeded'
@@ -381,12 +395,20 @@ export class MachineControlGateway implements OnApplicationBootstrap, OnApplicat
             commandUuid: result.commandId,
             idempotencyKey: result.idempotencyKey,
             status: preflightFailed ? 'failed' : result.status,
-            errorCode: preflightFailed ? 'PREFLIGHT_FAILED' : result.errorCode,
+            errorCode: preflightFailureCode ?? result.errorCode,
             errorMessage,
             result: validatedResult,
             completedAt: new Date(),
         });
         if (!accepted) throw new Error('unknown or already completed command result');
+        if (commandKind === 'reconcile_instance' && result.status === 'succeeded') {
+            const reconciled = reconcileInstanceResultSchema.parse(validatedResult);
+            await this.nodesQueuesService.startNode({
+                nodeUuid: reconciled.instanceId,
+                force: true,
+                managedConfigUpdate: true,
+            });
+        }
         await this.sendReadyCommands(webSocket, state.machineUuid);
     }
 

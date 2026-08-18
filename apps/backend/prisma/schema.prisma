@@ -278,10 +278,33 @@ model Machines {
 
   nodes    Nodes[]
   commands MachineCommands[]
+  provisioningPlans MachineProvisioningPlans[]
 
   @@index([status])
   @@index([agentLastSeenAt])
   @@map("machines")
+}
+
+model MachineProvisioningPlans {
+  uuid          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  machineUuid   String   @map("machine_uuid") @db.Uuid
+  status        String   @default("PENDING") @db.VarChar(32)
+  request       Json
+  requestHash   String   @map("request_hash") @db.VarChar(64)
+  result        Json?
+  commandUuid   String?  @unique @map("command_uuid") @db.Uuid
+  errorCode     String?  @map("error_code") @db.VarChar(64)
+  errorMessage  String?  @map("error_message") @db.VarChar(1024)
+  expiresAt     DateTime @map("expires_at")
+  appliedAt     DateTime? @map("applied_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  machine Machines @relation(fields: [machineUuid], references: [uuid], onDelete: Cascade)
+
+  @@index([machineUuid, status])
+  @@index([expiresAt])
+  @@map("machine_provisioning_plans")
 }
 
 model MachineCommands {

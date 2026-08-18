@@ -1,5 +1,5 @@
-import { Prisma } from '@prisma/client';
-import { randomUUID } from 'node:crypto';
+import { MachineProvisioningPlans, Prisma } from '@prisma/client';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { Injectable } from '@nestjs/common';
 
@@ -12,6 +12,34 @@ import {
     ProtocolKey,
     SYSTEM_TEMPLATE_VERSION,
 } from '../protocol-templates';
+
+const PLAN_TTL_MS = 10 * 60 * 1_000;
+const DEFAULT_PORT_CANDIDATES = [443, 8443, 2053, 2083, 2087, 2096, 2443, 9443] as const;
+
+type ProvisionProtocolInput = {
+    protocol: ProtocolKey;
+    remark?: string;
+    externalPort: number;
+    fallbackPorts?: number[];
+    certificate?:
+        | { mode: 'HTTP_01'; domain: string; email: string }
+        | {
+              mode: 'IMPORT_EXISTING';
+              domain: string;
+              certificatePath: string;
+              privateKeyPath: string;
+          };
+    serverName?: string;
+    target?: string;
+    congestion?: 'bbr' | 'brutal';
+    upMbps?: number;
+    downMbps?: number;
+};
+
+type ProvisionRequest = {
+    protocols: ProvisionProtocolInput[];
+    enableWarp: boolean;
+};
 
 @Injectable()
 export class MachinesRepository {
@@ -43,31 +71,165 @@ export class MachinesRepository {
         return result ? new MachineEntity(result) : null;
     }
 
+    async getProvisioningPlan(
+        machineUuid: string,
+        planUuid: string,
+    ): Promise<MachineProvisioningPlans | null> {
+        const plan = await this.prisma.machineProvisioningPlans.findFirst({
+            where: { uuid: planUuid, machineUuid },
+        });
+        if (plan && ['PENDING', 'READY'].includes(plan.status) && plan.expiresAt <= new Date()) {
+            return this.prisma.machineProvisioningPlans.update({
+                where: { uuid: plan.uuid },
+                data: {
+                    status: 'EXPIRED',
+                    errorCode: 'PLAN_EXPIRED',
+                    errorMessage: 'Resource plan expired before it was applied',
+                },
+            });
+        }
+        return plan;
+    }
+
+    async createProvisioningPlan(input: {
+        machineUuid: string;
+        request: ProvisionRequest;
+        now: Date;
+    }): Promise<{
+        machine: MachineEntity;
+        plan: MachineProvisioningPlans;
+        commandUuid: string;
+    }> {
+        return this.prisma.$transaction(async (transaction) => {
+            const machine = await transaction.machines.findUnique({
+                where: { uuid: input.machineUuid },
+                include: { nodes: { select: { protocolKey: true } } },
+            });
+            if (!machine || machine.archivedAt) {
+                throw new ProvisioningError('MACHINE_NOT_FOUND');
+            }
+            if (!machine.clientCertFingerprint) {
+                throw new ProvisioningError('MACHINE_NOT_ENROLLED');
+            }
+            if (
+                !machine.agentLastSeenAt ||
+                input.now.getTime() - machine.agentLastSeenAt.getTime() > 2 * 60 * 1_000
+            ) {
+                throw new ProvisioningError('MACHINE_OFFLINE');
+            }
+            if (!machine.agentCapabilities.includes('discover_host')) {
+                throw new ProvisioningError('MACHINE_AGENT_CAPABILITY_MISSING');
+            }
+            const existingProtocols = new Set(
+                machine.nodes.map((node) => node.protocolKey).filter(Boolean),
+            );
+            if (input.request.protocols.some((item) => existingProtocols.has(item.protocol))) {
+                throw new ProvisioningError('PROTOCOL_ALREADY_EXISTS');
+            }
+            const request = normalizeProvisionRequest(input.request);
+            const requestHash = hashProvisionRequest(request);
+            const reusablePlan = await transaction.machineProvisioningPlans.findFirst({
+                where: {
+                    machineUuid: input.machineUuid,
+                    status: { in: ['PENDING', 'READY'] },
+                    requestHash,
+                    expiresAt: { gt: input.now },
+                    commandUuid: { not: null },
+                },
+                orderBy: { createdAt: 'desc' },
+            });
+            if (reusablePlan?.commandUuid) {
+                return {
+                    machine: new MachineEntity(machine),
+                    plan: reusablePlan,
+                    commandUuid: reusablePlan.commandUuid,
+                };
+            }
+            const supersededPlans = await transaction.machineProvisioningPlans.findMany({
+                where: {
+                    machineUuid: input.machineUuid,
+                    status: { in: ['PENDING', 'READY'] },
+                    commandUuid: { not: null },
+                },
+                select: { commandUuid: true },
+            });
+            await transaction.machineProvisioningPlans.updateMany({
+                where: {
+                    machineUuid: input.machineUuid,
+                    status: { in: ['PENDING', 'READY'] },
+                },
+                data: { status: 'EXPIRED', errorCode: 'PLAN_SUPERSEDED' },
+            });
+            const supersededCommandUuids = supersededPlans.flatMap((plan) =>
+                plan.commandUuid ? [plan.commandUuid] : [],
+            );
+            if (supersededCommandUuids.length > 0) {
+                await transaction.machineCommands.updateMany({
+                    where: { uuid: { in: supersededCommandUuids }, status: 'QUEUED' },
+                    data: {
+                        status: 'CANCELLED',
+                        errorCode: 'PLAN_SUPERSEDED',
+                        completedAt: input.now,
+                    },
+                });
+            }
+            const plan = await transaction.machineProvisioningPlans.create({
+                data: {
+                    machineUuid: input.machineUuid,
+                    status: 'PENDING',
+                    request: request as Prisma.InputJsonValue,
+                    requestHash,
+                    expiresAt: new Date(input.now.getTime() + PLAN_TTL_MS),
+                },
+            });
+            const commandUuid = await createCommand(
+                transaction,
+                input.machineUuid,
+                'discover_host',
+                discoveryPayload(plan.uuid, request, 'PLAN'),
+                input.now,
+            );
+            const prepared = await transaction.machineProvisioningPlans.update({
+                where: { uuid: plan.uuid },
+                data: { commandUuid },
+            });
+            const updated = await transaction.machines.update({
+                where: { uuid: input.machineUuid },
+                data: {
+                    status: 'PROVISIONING',
+                    lastErrorCode: null,
+                    lastStatusMessage: null,
+                },
+            });
+            return {
+                machine: new MachineEntity(updated),
+                plan: prepared,
+                commandUuid,
+            };
+        });
+    }
+
     async provision(input: {
         machineUuid: string;
-        protocols: Array<{
-            protocol: ProtocolKey;
-            remark?: string;
-            externalPort: number;
-            certificate?:
-                | { mode: 'HTTP_01'; domain: string; email: string }
-                | {
-                      mode: 'IMPORT_EXISTING';
-                      domain: string;
-                      certificatePath: string;
-                      privateKeyPath: string;
-                  };
-            serverName?: string;
-            target?: string;
-            congestion?: 'bbr' | 'brutal';
-            upMbps?: number;
-            downMbps?: number;
-        }>;
+        planUuid: string;
+        protocols: ProvisionProtocolInput[];
         enableWarp: boolean;
         nodeSecrets: Partial<Record<ProtocolKey, string>>;
         now: Date;
     }): Promise<{ machine: MachineEntity; nodeUuids: string[]; commandUuids: string[] }> {
         return this.prisma.$transaction(async (transaction) => {
+            const claimedPlan = await transaction.machineProvisioningPlans.updateMany({
+                where: {
+                    uuid: input.planUuid,
+                    machineUuid: input.machineUuid,
+                    status: 'READY',
+                    expiresAt: { gt: input.now },
+                },
+                data: { status: 'APPLIED', appliedAt: input.now },
+            });
+            if (claimedPlan.count !== 1) {
+                throw new ProvisioningError('PLAN_NOT_READY');
+            }
             const machine = await transaction.machines.findUnique({
                 where: { uuid: input.machineUuid },
                 include: {
@@ -132,22 +294,6 @@ export class MachinesRepository {
 
             const nodeUuids: string[] = [];
             const commandUuids: string[] = [];
-            const ports = input.protocols.map((item) => ({
-                port: item.externalPort,
-                network: PROTOCOL_TEMPLATES[item.protocol].network,
-            }));
-            if (input.protocols.some((item) => item.certificate?.mode === 'HTTP_01')) {
-                ports.push({ port: 80, network: 'tcp' });
-            }
-            commandUuids.push(
-                await createCommand(
-                    transaction,
-                    input.machineUuid,
-                    'preflight',
-                    { ports },
-                    input.now,
-                ),
-            );
             if (input.enableWarp) {
                 commandUuids.push(
                     await createCommand(
@@ -216,6 +362,22 @@ export class MachinesRepository {
                 });
                 nodeUuids.push(node.uuid);
 
+                commandUuids.push(
+                    await createCommand(
+                        transaction,
+                        machine.uuid,
+                        'preflight',
+                        {
+                            instanceId: node.uuid,
+                            ports:
+                                certificate?.mode === 'HTTP_01'
+                                    ? [{ port: 80, network: 'tcp' }]
+                                    : [],
+                        },
+                        input.now,
+                    ),
+                );
+
                 const hostAddress = certificate?.domain ?? machine.address;
                 await transaction.hosts.create({
                     data: {
@@ -234,6 +396,24 @@ export class MachinesRepository {
                     },
                 });
 
+                commandUuids.push(
+                    await createCommand(
+                        transaction,
+                        machine.uuid,
+                        'reconcile_instance',
+                        {
+                            instanceId: node.uuid,
+                            protocol: requested.protocol,
+                            image: NODE_IMAGE,
+                            controlPort: template.controlPort,
+                            externalPort: requested.externalPort,
+                            fallbackPorts: requested.fallbackPorts ?? [],
+                            network: template.network,
+                            secretKey: nodeSecret,
+                        },
+                        input.now,
+                    ),
+                );
                 if (certificate) {
                     commandUuids.push(
                         await createCommand(
@@ -251,23 +431,6 @@ export class MachinesRepository {
                         ),
                     );
                 }
-                commandUuids.push(
-                    await createCommand(
-                        transaction,
-                        machine.uuid,
-                        'reconcile_instance',
-                        {
-                            instanceId: node.uuid,
-                            protocol: requested.protocol,
-                            image: NODE_IMAGE,
-                            controlPort: template.controlPort,
-                            externalPort: requested.externalPort,
-                            network: template.network,
-                            secretKey: nodeSecret,
-                        },
-                        input.now,
-                    ),
-                );
             }
 
             const updated = await transaction.machines.update({
@@ -329,23 +492,6 @@ export class MachinesRepository {
             }
 
             const commandUuids: string[] = [];
-            const needsHTTP01 = machine.nodes.some(
-                (node) =>
-                    node.certificateMode === 'HTTP_01' &&
-                    (node.certificateStatus !== 'VALID' ||
-                        !node.certificateExpiresAt ||
-                        node.certificateExpiresAt <= input.now),
-            );
-            commandUuids.push(
-                await createCommand(
-                    transaction,
-                    machine.uuid,
-                    'preflight',
-                    { ports: needsHTTP01 ? [{ port: 80, network: 'tcp' }] : [] },
-                    input.now,
-                ),
-            );
-
             const warpDesired = machine.nodes.some(
                 (node) => (node.protocolSettings as Record<string, unknown>).warpEnabled === true,
             );
@@ -392,6 +538,48 @@ export class MachinesRepository {
                     (node.certificateStatus !== 'VALID' ||
                         !node.certificateExpiresAt ||
                         node.certificateExpiresAt <= input.now);
+                commandUuids.push(
+                    await createCommand(
+                        transaction,
+                        machine.uuid,
+                        'preflight',
+                        {
+                            instanceId: node.uuid,
+                            ports:
+                                certificateRequired && node.certificateMode === 'HTTP_01'
+                                    ? [{ port: 80, network: 'tcp' }]
+                                    : [],
+                        },
+                        input.now,
+                    ),
+                );
+                commandUuids.push(
+                    await createCommand(
+                        transaction,
+                        machine.uuid,
+                        'reconcile_instance',
+                        {
+                            instanceId: node.uuid,
+                            protocol,
+                            image: NODE_IMAGE,
+                            controlPort: node.port,
+                            externalPort: node.externalPort,
+                            fallbackPorts: portCandidates(node.externalPort).filter(
+                                (port) =>
+                                    port !== node.externalPort &&
+                                    !machine.nodes.some(
+                                        (sibling) =>
+                                            sibling.uuid !== node.uuid &&
+                                            sibling.externalNetwork === node.externalNetwork &&
+                                            sibling.externalPort === port,
+                                    ),
+                            ),
+                            network: node.externalNetwork,
+                            secretKey,
+                        },
+                        input.now,
+                    ),
+                );
                 if (certificateRequired) {
                     if (!machine.agentCapabilities.includes('reconcile_certificate')) {
                         throw new ProvisioningError('MACHINE_AGENT_CAPABILITY_MISSING');
@@ -408,23 +596,6 @@ export class MachinesRepository {
                         ),
                     );
                 }
-                commandUuids.push(
-                    await createCommand(
-                        transaction,
-                        machine.uuid,
-                        'reconcile_instance',
-                        {
-                            instanceId: node.uuid,
-                            protocol,
-                            image: NODE_IMAGE,
-                            controlPort: node.port,
-                            externalPort: node.externalPort,
-                            network: node.externalNetwork,
-                            secretKey,
-                        },
-                        input.now,
-                    ),
-                );
                 await transaction.nodes.update({
                     where: { uuid: node.uuid },
                     data: {
@@ -832,6 +1003,19 @@ export class MachinesRepository {
             const status = input.status === 'succeeded' ? 'SUCCEEDED' : 'FAILED';
             const payload = command.payload as Record<string, unknown>;
             const instanceId = typeof payload.instanceId === 'string' ? payload.instanceId : null;
+            const planId = typeof payload.planId === 'string' ? payload.planId : null;
+            if (command.kind === 'discover_host') {
+                if (!planId) return false;
+                if (
+                    input.status === 'succeeded' &&
+                    (!input.result ||
+                        typeof input.result !== 'object' ||
+                        !('planId' in input.result) ||
+                        input.result.planId !== planId)
+                ) {
+                    return false;
+                }
+            }
             if (
                 input.status === 'succeeded' &&
                 instanceId &&
@@ -883,6 +1067,74 @@ export class MachinesRepository {
                 });
             }
 
+            if (command.kind === 'discover_host') {
+                if (!planId) return false;
+                if (input.status === 'succeeded' && input.result !== undefined) {
+                    const discoveryResult = input.result as {
+                        planId: string;
+                        system: unknown;
+                        ready: boolean;
+                    };
+                    const planStatus = discoveryResult.ready ? 'READY' : 'BLOCKED';
+                    const updatedPlan = await transaction.machineProvisioningPlans.updateMany({
+                        where: {
+                            uuid: planId,
+                            machineUuid: input.machineUuid,
+                            commandUuid: input.commandUuid,
+                            status: 'PENDING',
+                            expiresAt: { gt: input.completedAt },
+                        },
+                        data: {
+                            status: planStatus,
+                            result: input.result as Prisma.InputJsonValue,
+                            errorCode: discoveryResult.ready ? null : 'RESOURCE_PLAN_BLOCKED',
+                            errorMessage: discoveryResult.ready
+                                ? null
+                                : 'No requested protocol is currently deployable',
+                        },
+                    });
+                    if (updatedPlan.count === 1) {
+                        await transaction.machines.update({
+                            where: { uuid: input.machineUuid },
+                            data: {
+                                status: 'CONNECTED',
+                                systemInfo: discoveryResult.system as Prisma.InputJsonValue,
+                                lastErrorCode: discoveryResult.ready
+                                    ? null
+                                    : 'RESOURCE_PLAN_BLOCKED',
+                                lastStatusMessage: discoveryResult.ready
+                                    ? null
+                                    : 'No requested protocol is currently deployable',
+                            },
+                        });
+                    } else {
+                        await transaction.machineProvisioningPlans.updateMany({
+                            where: { uuid: planId, status: 'PENDING' },
+                            data: { status: 'EXPIRED', errorCode: 'PLAN_EXPIRED' },
+                        });
+                    }
+                } else {
+                    await transaction.machineProvisioningPlans.updateMany({
+                        where: {
+                            uuid: planId,
+                            machineUuid: input.machineUuid,
+                            commandUuid: input.commandUuid,
+                            status: 'PENDING',
+                        },
+                        data: {
+                            status: 'FAILED',
+                            errorCode: failureCode,
+                            errorMessage: failureMessage,
+                        },
+                    });
+                    await transaction.machines.update({
+                        where: { uuid: input.machineUuid },
+                        data: { status: 'CONNECTED' },
+                    });
+                }
+                return true;
+            }
+
             if (input.status === 'succeeded' && input.result !== undefined) {
                 if (command.kind === 'inventory') {
                     await transaction.machines.update({
@@ -891,16 +1143,22 @@ export class MachinesRepository {
                     });
                 } else if (command.kind === 'reconcile_instance' && instanceId) {
                     const reconcileResult = input.result as {
+                        externalPort: number;
                         realityPublicKey?: string;
                         realityShortId?: string;
                     };
                     await transaction.nodes.updateMany({
                         where: { uuid: instanceId, machineUuid: input.machineUuid },
                         data: {
+                            externalPort: reconcileResult.externalPort,
                             lastErrorCode: null,
                             lastStatusMessage: null,
                             lastStatusChange: input.completedAt,
                         },
+                    });
+                    await transaction.hosts.updateMany({
+                        where: { nodes: { some: { nodeUuid: instanceId } } },
+                        data: { port: reconcileResult.externalPort },
                     });
                     if (reconcileResult.realityPublicKey && reconcileResult.realityShortId) {
                         await transaction.hosts.updateMany({
@@ -1030,16 +1288,31 @@ export class MachinesRepository {
                     const pendingNodes = await transaction.nodes.count({
                         where: {
                             machineUuid: input.machineUuid,
-                            lifecycleState: { notIn: ['CONFIG_VALIDATED', 'PUBLISHED'] },
+                            lifecycleState: {
+                                notIn: ['CONFIG_VALIDATED', 'PUBLISHED', 'FAILED', 'DEGRADED'],
+                            },
                         },
                     });
                     if (pendingNodes === 0) {
                         const unpublished = await transaction.nodes.count({
                             where: { machineUuid: input.machineUuid, isPublished: false },
                         });
+                        const failedNodes = await transaction.nodes.count({
+                            where: {
+                                machineUuid: input.machineUuid,
+                                lifecycleState: { in: ['FAILED', 'DEGRADED'] },
+                            },
+                        });
                         await transaction.machines.update({
                             where: { uuid: input.machineUuid },
-                            data: { status: unpublished === 0 ? 'PUBLISHED' : 'CONFIG_VALIDATED' },
+                            data: {
+                                status:
+                                    failedNodes > 0
+                                        ? 'DEGRADED'
+                                        : unpublished === 0
+                                          ? 'PUBLISHED'
+                                          : 'CONFIG_VALIDATED',
+                            },
                         });
                     }
                 }
@@ -1135,9 +1408,22 @@ export class MachinesRepository {
                         data: { isDisabled: true },
                     });
                 }
+                const remainingSiblings = await transaction.nodes.count({
+                    where: {
+                        machineUuid: input.machineUuid,
+                        uuid: { not: instanceId },
+                        lifecycleState: { notIn: ['FAILED', 'DEGRADED'] },
+                    },
+                });
                 await transaction.machines.update({
                     where: { uuid: input.machineUuid },
-                    data: { status: existingCertificateIsValid ? 'DEGRADED' : 'FAILED' },
+                    data: {
+                        status: existingCertificateIsValid
+                            ? 'DEGRADED'
+                            : remainingSiblings > 0
+                              ? 'PROVISIONING'
+                              : 'FAILED',
+                    },
                 });
             } else if (
                 instanceId &&
@@ -1163,7 +1449,10 @@ export class MachinesRepository {
                     where: { uuid: input.machineUuid },
                     data: { status: rolledBackNode?.isPublished ? 'DEGRADED' : 'FAILED' },
                 });
-            } else if (instanceId) {
+            } else if (
+                instanceId &&
+                !(command.kind === 'preflight' && input.errorCode === 'PREFLIGHT_MACHINE_FAILED')
+            ) {
                 const publishedNodes = await transaction.nodes.count({
                     where: { machineUuid: input.machineUuid, isPublished: true },
                 });
@@ -1199,9 +1488,23 @@ export class MachinesRepository {
                         completedAt: input.completedAt,
                     },
                 });
+                const remainingSiblings = await transaction.nodes.count({
+                    where: {
+                        machineUuid: input.machineUuid,
+                        uuid: { not: instanceId },
+                        lifecycleState: { notIn: ['FAILED', 'DEGRADED'] },
+                    },
+                });
                 await transaction.machines.update({
                     where: { uuid: input.machineUuid },
-                    data: { status: publishedNodes > 0 ? 'DEGRADED' : 'FAILED' },
+                    data: {
+                        status:
+                            remainingSiblings > 0
+                                ? 'PROVISIONING'
+                                : publishedNodes > 0
+                                  ? 'DEGRADED'
+                                  : 'FAILED',
+                    },
                 });
             } else if (command.kind === 'reconcile_warp') {
                 const publishedNodes = await transaction.nodes.count({
@@ -1229,7 +1532,11 @@ export class MachinesRepository {
                     },
                 });
             }
-            if (command.kind === 'preflight' && input.status !== 'succeeded') {
+            if (
+                command.kind === 'preflight' &&
+                input.status !== 'succeeded' &&
+                (!instanceId || input.errorCode === 'PREFLIGHT_MACHINE_FAILED')
+            ) {
                 await transaction.machineCommands.updateMany({
                     where: { machineUuid: input.machineUuid, status: 'QUEUED' },
                     data: {
@@ -1320,6 +1627,56 @@ function managedNodeName(machineName: string, protocol: ProtocolKey): string {
         HYSTERIA2: 'Hysteria2',
     };
     return `${machineName.slice(0, 18)}-${suffix[protocol]}`;
+}
+
+function normalizeProvisionRequest(request: ProvisionRequest): ProvisionRequest {
+    return {
+        enableWarp: request.enableWarp,
+        protocols: [...request.protocols]
+            .sort((left, right) => left.protocol.localeCompare(right.protocol))
+            .map((protocol) => ({
+                protocol: protocol.protocol,
+                ...(protocol.remark ? { remark: protocol.remark } : {}),
+                externalPort: protocol.externalPort,
+                ...(protocol.certificate ? { certificate: { ...protocol.certificate } } : {}),
+                ...(protocol.serverName ? { serverName: protocol.serverName } : {}),
+                ...(protocol.target ? { target: protocol.target } : {}),
+                ...(protocol.congestion ? { congestion: protocol.congestion } : {}),
+                ...(protocol.upMbps ? { upMbps: protocol.upMbps } : {}),
+                ...(protocol.downMbps ? { downMbps: protocol.downMbps } : {}),
+            })),
+    };
+}
+
+function hashProvisionRequest(request: ProvisionRequest): string {
+    return createHash('sha256').update(JSON.stringify(request), 'utf8').digest('hex');
+}
+
+function portCandidates(preferredPort: number): number[] {
+    return [preferredPort, ...DEFAULT_PORT_CANDIDATES].filter(
+        (port, index, ports) => ports.indexOf(port) === index,
+    );
+}
+
+function discoveryPayload(
+    planUuid: string,
+    request: ProvisionRequest,
+    mode: 'PLAN' | 'REVALIDATE',
+): Prisma.InputJsonValue {
+    return {
+        planId: planUuid,
+        mode,
+        protocols: request.protocols.map((protocol) => {
+            const template = PROTOCOL_TEMPLATES[protocol.protocol];
+            return {
+                protocol: protocol.protocol,
+                network: template.network,
+                controlPort: template.controlPort,
+                candidates: portCandidates(protocol.externalPort),
+                requiresHttp01: protocol.certificate?.mode === 'HTTP_01',
+            };
+        }),
+    };
 }
 
 async function createCommand(

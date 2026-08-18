@@ -1,5 +1,6 @@
 import { notifications } from '@mantine/notifications'
 import {
+    ApplyMachineProvisioningPlanCommand,
     CreateMachineCommand,
     ProvisionMachineCommand,
     PublishMachineCommand,
@@ -39,6 +40,15 @@ export const useProvisionMachine = createMutationHook({
     responseSchema: ProvisionMachineCommand.ResponseSchema,
     requestMethod: ProvisionMachineCommand.endpointDetails.REQUEST_METHOD,
     rMutationParams: { onError: failure('Provision Machine') }
+})
+
+export const useApplyMachineProvisioningPlan = createMutationHook({
+    endpoint: ApplyMachineProvisioningPlanCommand.TSQ_url,
+    routeParamsSchema: ApplyMachineProvisioningPlanCommand.RequestParamsSchema,
+    bodySchema: ApplyMachineProvisioningPlanCommand.RequestBodySchema,
+    responseSchema: ApplyMachineProvisioningPlanCommand.ResponseSchema,
+    requestMethod: ApplyMachineProvisioningPlanCommand.endpointDetails.REQUEST_METHOD,
+    rMutationParams: { onError: failure('Apply Machine Provisioning Plan') }
 })
 
 export const usePublishMachine = createMutationHook({

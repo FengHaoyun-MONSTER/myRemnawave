@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/certificate"
+	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/discovery"
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/instance"
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/inventory"
 	"github.com/FengHaoyun-MONSTER/myRemnawave/apps/machine-agent/internal/nodeconfig"
@@ -37,7 +39,8 @@ type PortRequirement struct {
 }
 
 type PreflightRequest struct {
-	Ports []PortRequirement `json:"ports"`
+	InstanceID string            `json:"instanceId,omitempty"`
+	Ports      []PortRequirement `json:"ports"`
 }
 
 type Check struct {
@@ -68,6 +71,9 @@ func (h PreflightHandler) Execute(ctx context.Context, payload json.RawMessage) 
 	}
 	if len(request.Ports) > 32 {
 		return nil, &Error{Code: "TOO_MANY_PORTS", Message: "at most 32 ports may be checked"}
+	}
+	if request.InstanceID != "" && !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(request.InstanceID) {
+		return nil, &Error{Code: "INVALID_PREFLIGHT_PAYLOAD", Message: "instanceId must be a lowercase UUID"}
 	}
 	system, err := inventory.Collect(h.ManagedRoot)
 	if err != nil {
@@ -109,6 +115,7 @@ func diskCheck(system inventory.System) Check {
 func DefaultHandlers(managedRoot, machineID string) map[string]Handler {
 	return map[string]Handler{
 		protocol.CommandInventory:            InventoryHandler{ManagedRoot: managedRoot},
+		protocol.CommandDiscoverHost:         discovery.Handler{ManagedRoot: managedRoot},
 		protocol.CommandPreflight:            PreflightHandler{ManagedRoot: managedRoot},
 		protocol.CommandReconcileInstance:    instance.Handler{ManagedRoot: managedRoot, MachineID: machineID},
 		protocol.CommandReconcileCertificate: certificate.Handler{ManagedRoot: managedRoot},

@@ -18,6 +18,17 @@ type fakeRunner struct {
 	calls [][]string
 }
 
+type fakePortProbe struct {
+	available map[uint16]bool
+}
+
+func (f fakePortProbe) Available(_ context.Context, _ string, port uint16) (bool, string) {
+	if f.available[port] {
+		return true, "available"
+	}
+	return false, "occupied"
+}
+
 type ownershipRunner struct {
 	calls  [][]string
 	labels string
@@ -79,6 +90,75 @@ func TestReconcileRealityInstance(t *testing.T) {
 		if strings.Contains(joined, request.SecretKey) {
 			t.Fatal("secret key leaked into docker process arguments")
 		}
+	}
+}
+
+func TestReconcileSelectsFirstAvailableFallbackBeforeMutation(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{}
+	request := Request{
+		InstanceID:    "123e4567-e89b-42d3-a456-426614174000",
+		Protocol:      "VLESS_REALITY",
+		Image:         "remnawave/node@sha256:" + strings.Repeat("a", 64),
+		ControlPort:   2222,
+		ExternalPort:  443,
+		FallbackPorts: []uint16{8443, 2053},
+		Network:       "tcp",
+		SecretKey:     strings.Repeat("A", 120),
+	}
+	payload, _ := json.Marshal(request)
+	resultRaw, err := (Handler{
+		ManagedRoot: root,
+		MachineID:   "123e4567-e89b-42d3-a456-426614174999",
+		Runner:      runner,
+		Probe:       fakePortProbe{available: map[uint16]bool{2053: true}},
+	}).Execute(context.Background(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := resultRaw.(Result)
+	if result.ExternalPort != 2053 {
+		t.Fatalf("selected port = %d, want 2053", result.ExternalPort)
+	}
+	var published bool
+	for _, call := range runner.calls {
+		if strings.Contains(strings.Join(call, " "), "2053:2053/tcp") {
+			published = true
+		}
+	}
+	if !published {
+		t.Fatal("fallback port was not used by docker run")
+	}
+}
+
+func TestReconcileStopsBeforeMutationWhenPortPoolIsExhausted(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{}
+	request := Request{
+		InstanceID:    "123e4567-e89b-42d3-a456-426614174000",
+		Protocol:      "VLESS_REALITY",
+		Image:         "remnawave/node@sha256:" + strings.Repeat("a", 64),
+		ControlPort:   2222,
+		ExternalPort:  443,
+		FallbackPorts: []uint16{8443},
+		Network:       "tcp",
+		SecretKey:     strings.Repeat("A", 120),
+	}
+	payload, _ := json.Marshal(request)
+	_, err := (Handler{
+		ManagedRoot: root,
+		MachineID:   "123e4567-e89b-42d3-a456-426614174999",
+		Runner:      runner,
+		Probe:       fakePortProbe{available: map[uint16]bool{}},
+	}).Execute(context.Background(), payload)
+	if err == nil || !strings.Contains(err.Error(), "PORT_POOL_EXHAUSTED") {
+		t.Fatalf("expected PORT_POOL_EXHAUSTED, got %v", err)
+	}
+	if len(runner.calls) != 1 || runner.calls[0][0] != "inspect" {
+		t.Fatalf("unexpected docker mutation before resource validation: %v", runner.calls)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "instances", request.InstanceID)); !os.IsNotExist(statErr) {
+		t.Fatalf("instance directory was created before resource validation: %v", statErr)
 	}
 }
 

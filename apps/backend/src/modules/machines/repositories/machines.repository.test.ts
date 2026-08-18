@@ -9,6 +9,70 @@ const NODE_UUID = '123e4567-e89b-42d3-a456-426614174001';
 const COMMAND_UUID = '123e4567-e89b-42d3-a456-426614174002';
 
 describe('MachinesRepository command completion', () => {
+    it('turns a successful partial discovery into an applicable plan without mutating protocols', async () => {
+        const planUpdate = vi.fn().mockResolvedValue({ count: 1 });
+        const machineUpdate = vi.fn().mockResolvedValue({});
+        const transaction = {
+            machineCommands: {
+                findFirst: vi.fn().mockResolvedValue({
+                    kind: 'discover_host',
+                    payload: { planId: NODE_UUID, mode: 'PLAN' },
+                }),
+                updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+            },
+            machineProvisioningPlans: { updateMany: planUpdate },
+            machines: { update: machineUpdate },
+        };
+        const repository = repositoryWithTransaction(transaction);
+        const discovery = {
+            planId: NODE_UUID,
+            system: { osId: 'debian' },
+            machineChecks: [],
+            dependencies: [],
+            protocols: [
+                {
+                    protocol: 'VLESS_REALITY',
+                    network: 'tcp',
+                    status: 'BLOCKED',
+                    selectedPort: null,
+                    checks: [],
+                    portAttempts: [],
+                },
+                {
+                    protocol: 'HYSTERIA2',
+                    network: 'udp',
+                    status: 'READY',
+                    selectedPort: 443,
+                    checks: [],
+                    portAttempts: [{ port: 443, available: true, message: 'available' }],
+                },
+            ],
+            machineReady: true,
+            ready: true,
+        };
+
+        await repository.completeCommand({
+            machineUuid: MACHINE_UUID,
+            commandUuid: COMMAND_UUID,
+            idempotencyKey: `discover_host:${COMMAND_UUID}`,
+            status: 'succeeded',
+            result: discovery,
+            completedAt: new Date('2026-08-18T00:00:00.000Z'),
+        });
+
+        expect(planUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({ uuid: NODE_UUID, status: 'PENDING' }),
+                data: expect.objectContaining({ status: 'READY', result: discovery }),
+            }),
+        );
+        expect(machineUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({ status: 'CONNECTED' }),
+            }),
+        );
+    });
+
     it('does not claim a newer desired revision when an older apply succeeds', async () => {
         const nodeUpdate = vi.fn();
         const transaction = {

@@ -173,9 +173,128 @@ describe('MachinesService enrollment safety', () => {
     });
 });
 
+describe('MachinesService resource planning', () => {
+    it('does not generate node credentials or create nodes during read-only planning', async () => {
+        const { service, repository, keygen, gateway } = createService(true);
+        repository.createProvisioningPlan.mockResolvedValue({
+            machine: machine({ status: 'PROVISIONING' }),
+            plan: provisioningPlan({ status: 'PENDING' }),
+            commandUuid: '123e4567-e89b-42d3-a456-426614174002',
+        });
+
+        const result = await service.provision('10e2c8e1-515c-4a9c-99eb-dbb8cc2aabdc', {
+            protocols: [
+                {
+                    protocol: 'VLESS_REALITY',
+                    externalPort: 443,
+                    serverName: 'www.microsoft.com',
+                    target: 'www.microsoft.com:443',
+                },
+            ],
+            enableWarp: false,
+        });
+
+        expect(result.plan.status).toBe('PENDING');
+        expect(keygen.generateKey).not.toHaveBeenCalled();
+        expect(repository.provision).not.toHaveBeenCalled();
+        expect(gateway.dispatchReady).toHaveBeenCalled();
+    });
+
+    it('applies only ready sibling protocols and preserves deterministic fallback order', async () => {
+        const { service, repository, keygen } = createService(true);
+        const planUuid = '123e4567-e89b-42d3-a456-426614174005';
+        repository.getProvisioningPlan.mockResolvedValue(
+            provisioningPlan({
+                uuid: planUuid,
+                status: 'READY',
+                request: {
+                    protocols: [
+                        {
+                            protocol: 'VLESS_REALITY',
+                            externalPort: 443,
+                            serverName: 'www.microsoft.com',
+                            target: 'www.microsoft.com:443',
+                        },
+                        {
+                            protocol: 'HYSTERIA2',
+                            externalPort: 443,
+                            certificate: {
+                                mode: 'IMPORT_EXISTING',
+                                domain: 'hy2.example.com',
+                                certificatePath: '/etc/certs/fullchain.pem',
+                                privateKeyPath: '/etc/certs/privkey.pem',
+                            },
+                        },
+                    ],
+                    enableWarp: false,
+                },
+                result: {
+                    planId: planUuid,
+                    system: {},
+                    machineChecks: [],
+                    dependencies: [],
+                    protocols: [
+                        {
+                            protocol: 'VLESS_REALITY',
+                            network: 'tcp',
+                            status: 'BLOCKED',
+                            selectedPort: null,
+                            errorCode: 'PORT_POOL_EXHAUSTED',
+                            checks: [],
+                            portAttempts: [],
+                        },
+                        {
+                            protocol: 'HYSTERIA2',
+                            network: 'udp',
+                            status: 'READY',
+                            selectedPort: 2053,
+                            checks: [],
+                            portAttempts: [
+                                { port: 443, available: false, message: 'occupied' },
+                                { port: 2053, available: true, message: 'available' },
+                                { port: 2087, available: true, message: 'available' },
+                            ],
+                        },
+                    ],
+                    machineReady: true,
+                    ready: true,
+                },
+            }),
+        );
+        keygen.generateKey.mockResolvedValue({
+            isOk: true,
+            response: { payload: 'A'.repeat(120) },
+        });
+        repository.provision.mockResolvedValue({
+            machine: machine({ status: 'PROVISIONING' }),
+            nodeUuids: ['123e4567-e89b-42d3-a456-426614174001'],
+            commandUuids: ['123e4567-e89b-42d3-a456-426614174002'],
+        });
+
+        await service.applyProvisioningPlan('10e2c8e1-515c-4a9c-99eb-dbb8cc2aabdc', planUuid);
+
+        expect(keygen.generateKey).toHaveBeenCalledTimes(1);
+        expect(repository.provision).toHaveBeenCalledWith(
+            expect.objectContaining({
+                planUuid,
+                protocols: [
+                    expect.objectContaining({
+                        protocol: 'HYSTERIA2',
+                        externalPort: 2053,
+                        fallbackPorts: [2087],
+                    }),
+                ],
+            }),
+        );
+    });
+});
+
 function createService(controlReady: boolean) {
     const repository = {
         create: vi.fn(),
+        createProvisioningPlan: vi.fn(),
+        getProvisioningPlan: vi.fn(),
+        provision: vi.fn(),
         findByEnrollmentCredentialHash: vi.fn(),
         getCertificateAuthority: vi.fn(),
         consumeEnrollmentToken: vi.fn(),
@@ -187,16 +306,42 @@ function createService(controlReady: boolean) {
                 : undefined,
         ),
     };
-    const gateway = { isReady: vi.fn(() => controlReady) };
+    const gateway = {
+        isReady: vi.fn(() => controlReady),
+        dispatchReady: vi.fn().mockResolvedValue(undefined),
+    };
+    const keygen = { generateKey: vi.fn() };
     return {
         repository,
+        gateway,
+        keygen,
         service: new MachinesService(
             repository as unknown as MachinesRepository,
             config as unknown as TypedConfigService,
             gateway as unknown as MachineControlGateway,
-            {} as KeygenService,
+            keygen as unknown as KeygenService,
             {} as NodesQueuesService,
         ),
+    };
+}
+
+function provisioningPlan(overrides: object = {}) {
+    const now = new Date();
+    return {
+        uuid: '123e4567-e89b-42d3-a456-426614174005',
+        machineUuid: '10e2c8e1-515c-4a9c-99eb-dbb8cc2aabdc',
+        status: 'PENDING',
+        request: {},
+        requestHash: 'a'.repeat(64),
+        result: null,
+        commandUuid: '123e4567-e89b-42d3-a456-426614174002',
+        errorCode: null,
+        errorMessage: null,
+        expiresAt: new Date(now.getTime() + 60_000),
+        appliedAt: null,
+        createdAt: now,
+        updatedAt: now,
+        ...overrides,
     };
 }
 
