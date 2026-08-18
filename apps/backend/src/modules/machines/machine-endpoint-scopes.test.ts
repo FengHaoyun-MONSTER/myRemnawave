@@ -1,28 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-    CreateMachineCommand,
-    GetMachineCommand,
-    GetMachineControlStatusCommand,
-    GetMachinesCommand,
-    ProvisionMachineCommand,
-    PublishMachineCommand,
-    RetryMachineCommand,
-    RotateMachineEnrollmentTokenCommand,
-} from '@libs/contracts/commands';
+import { SCOPE_ENDPOINT } from '@common/decorators/scopes';
+import { EndpointDetails } from '@libs/contracts/constants';
+
+import { MachinesController } from './machines.controller';
 
 describe('machine API endpoint scopes', () => {
     it('uses unique endpoint slugs that do not collide with resource scopes', () => {
-        const scopes = [
-            CreateMachineCommand.endpointDetails.SCOPE,
-            GetMachinesCommand.endpointDetails.SCOPE,
-            GetMachineCommand.endpointDetails.SCOPE,
-            GetMachineControlStatusCommand.endpointDetails.SCOPE,
-            RotateMachineEnrollmentTokenCommand.endpointDetails.SCOPE,
-            ProvisionMachineCommand.endpointDetails.SCOPE,
-            RetryMachineCommand.endpointDetails.SCOPE,
-            PublishMachineCommand.endpointDetails.SCOPE,
-        ];
+        const prototype = MachinesController.prototype;
+        const scopes = Object.getOwnPropertyNames(prototype)
+            .filter((methodName) => methodName !== 'constructor')
+            .map((methodName) =>
+                Reflect.getMetadata(SCOPE_ENDPOINT, Reflect.get(prototype, methodName) as object),
+            )
+            .filter((details): details is EndpointDetails => details !== undefined)
+            .map((details) => details.SCOPE);
 
         expect(scopes).not.toContain('read');
         expect(scopes).not.toContain('write');
