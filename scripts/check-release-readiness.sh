@@ -3,7 +3,8 @@
 set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck source=../release-versions.env
+# The manifest path is resolved from this script so the check also works outside the repository root.
+# shellcheck disable=SC1091
 source "${repository_root}/release-versions.env"
 
 [[ "${AGENT_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
