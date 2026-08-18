@@ -49,6 +49,7 @@ type Handler struct {
 	Runner      Runner
 	LookupPath  func(string) (string, error)
 	ReadFile    func(string) ([]byte, error)
+	Lstat       func(string) (os.FileInfo, error)
 }
 
 func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, error) {
@@ -116,7 +117,11 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 	} else if !errors.Is(ownershipErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("DOCKER_OWNERSHIP_UNSAFE: %w", ownershipErr)
 	} else {
-		if dockerRuntimePresent(lookup) {
+		lstat := h.Lstat
+		if lstat == nil {
+			lstat = os.Lstat
+		}
+		if dockerRuntimePresent(lookup, lstat) {
 			return nil, errors.New("DOCKER_UNHEALTHY_EXTERNAL: Docker runtime indicators exist without an owned CLI")
 		}
 		if err := createOwnership(h.ManagedRoot, ownership); err != nil {
@@ -150,11 +155,11 @@ func (h Handler) Execute(ctx context.Context, payload json.RawMessage) (any, err
 	return Result{Name: "docker", Status: "INSTALLED_MANAGED", Version: version}, nil
 }
 
-func dockerRuntimePresent(lookup func(string) (string, error)) bool {
+func dockerRuntimePresent(lookup func(string) (string, error), lstat func(string) (os.FileInfo, error)) bool {
 	if _, err := lookup("dockerd"); err == nil {
 		return true
 	}
-	_, err := os.Lstat("/var/run/docker.sock")
+	_, err := lstat("/var/run/docker.sock")
 	return err == nil || !errors.Is(err, os.ErrNotExist)
 }
 

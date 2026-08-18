@@ -101,7 +101,12 @@ func TestReconcileRealityInstance(t *testing.T) {
 		SecretKey:    strings.Repeat("A", 120),
 	}
 	payload, _ := json.Marshal(request)
-	resultRaw, err := (Handler{ManagedRoot: root, MachineID: "123e4567-e89b-42d3-a456-426614174999", Runner: runner}).Execute(context.Background(), payload)
+	resultRaw, err := (Handler{
+		ManagedRoot: root,
+		MachineID:   "123e4567-e89b-42d3-a456-426614174999",
+		Runner:      runner,
+		Probe:       fakePortProbe{available: map[uint16]bool{443: true}},
+	}).Execute(context.Background(), payload)
 	if err != nil {
 		t.Fatal(err)
 	}

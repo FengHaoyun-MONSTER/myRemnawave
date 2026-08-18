@@ -72,6 +72,12 @@ func TestInstallsDebian13DockerCLIAndDaemonOnlyWhenAbsent(t *testing.T) {
 			}
 			return []byte("ID=debian\nVERSION_ID=\"13\"\n"), nil
 		},
+		Lstat: func(path string) (os.FileInfo, error) {
+			if path != "/var/run/docker.sock" {
+				t.Fatalf("unexpected lstat %s", path)
+			}
+			return nil, os.ErrNotExist
+		},
 	}).Execute(context.Background(), payload)
 	if err != nil {
 		t.Fatal(err)
